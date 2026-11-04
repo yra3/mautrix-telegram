@@ -194,11 +194,15 @@ func (tc *TelegramClient) wrapChatInfo(portalID networkid.PortalID, rawChat tg.C
 		}
 		left = chat.Left
 		if chat.Broadcast {
+			if !tc.main.Config.MemberList.SyncBroadcastChannels {
+				return nil, nil, fmt.Errorf("broadcast channel bridging is disabled")
+			}
 			info.Members.MemberMap.Set(bridgev2.ChatMember{
 				EventSender: bridgev2.EventSender{Sender: ids.MakeChannelUserID(chat.GetID())},
 				PowerLevel:  superadminPowerLevel,
 			})
-		} else if chat.Megagroup && !tc.main.Config.ShouldBridge(chat.ParticipantsCount) {
+		}
+		if chat.Megagroup && !tc.main.Config.ShouldBridge(chat.ParticipantsCount) {
 			// TODO change this to a better error whenever that is implemented in mautrix-go
 			return nil, nil, fmt.Errorf("too many participants (%d) in chat %d", chat.ParticipantsCount, chat.GetID())
 		}
