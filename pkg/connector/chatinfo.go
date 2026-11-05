@@ -477,6 +477,9 @@ func (tc *TelegramClient) wrapFullChatInfo(portalID networkid.PortalID, fullChat
 			}
 		}
 	case *tg.ChannelFull:
+		if !typedFullChat.Broadcast && !tc.main.Config.ShouldBridge(typedFullChat.ParticipantsCount) {
+			return nil, nil, fmt.Errorf("too many participants (%d) in channel %d", typedFullChat.ParticipantsCount, fullChat.FullChat.GetID())
+		}
 		mfm.ParticipantsHidden = !typedFullChat.CanViewParticipants || typedFullChat.ParticipantsHidden
 	case *tg.CommunityFull:
 	}
@@ -624,6 +627,22 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 			channel, topic, err := getTopicInfoFromResponse(resp, id, topicID)
 			if err != nil {
 				return nil, err
+			}
+			if channel != nil && channel.ParticipantsCount > 0 && !tc.main.Config.ShouldBridge(channel.ParticipantsCount) {
+				return nil, fmt.Errorf("too many participants (%d) in forum %d", channel.ParticipantsCount, id)
+			}
+			if channel != nil && channel.Forum && tc.main.Config.MaxMemberCount > 0 && channel.ParticipantsCount == 0 {
+				// If ParticipantsCount is unpopulated in basic channel, fetch full channel to verify member count
+				fullChat, errFull := APICallWithUpdates(ctx, tc, func() (*tg.MessagesChatFull, error) {
+					return tc.client.API().ChannelsGetFullChannel(ctx, &tg.InputChannel{ChannelID: id, AccessHash: accessHash})
+				})
+				if errFull == nil && fullChat != nil {
+					if cf, ok := fullChat.FullChat.(*tg.ChannelFull); ok {
+						if !tc.main.Config.ShouldBridge(cf.ParticipantsCount) {
+							return nil, fmt.Errorf("too many participants (%d) in forum %d", cf.ParticipantsCount, id)
+						}
+					}
+				}
 			}
 			info, mfm, err := tc.wrapChatInfo(portal.ID, channel)
 			if err != nil {
