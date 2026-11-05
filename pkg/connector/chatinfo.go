@@ -477,7 +477,7 @@ func (tc *TelegramClient) wrapFullChatInfo(portalID networkid.PortalID, fullChat
 			}
 		}
 	case *tg.ChannelFull:
-		if !typedFullChat.Broadcast && !tc.main.Config.ShouldBridge(typedFullChat.ParticipantsCount) {
+		if ch, ok := chat.(*tg.Channel); ok && !ch.Broadcast && !tc.main.Config.ShouldBridge(typedFullChat.ParticipantsCount) {
 			return nil, nil, fmt.Errorf("too many participants (%d) in channel %d", typedFullChat.ParticipantsCount, fullChat.FullChat.GetID())
 		}
 		mfm.ParticipantsHidden = !typedFullChat.CanViewParticipants || typedFullChat.ParticipantsHidden
