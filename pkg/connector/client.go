@@ -136,6 +136,14 @@ type TelegramClient struct {
 	stickerPacksByName   map[string]*stickerPackCache
 	stickerPacksByID     map[int64]*stickerPackCache
 	stickerPackCacheLock sync.Mutex
+
+	rejectedPeersLock sync.RWMutex
+	rejectedPeers     map[networkid.PortalID]rejectionInfo
+}
+
+type rejectionInfo struct {
+	reason string
+	expiry time.Time
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)
@@ -194,6 +202,7 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 		stickerPacksByName: map[string]*stickerPackCache{},
 		stickerPacksByID:   map[int64]*stickerPackCache{},
 
+		rejectedPeers:      make(map[networkid.PortalID]rejectionInfo),
 		recentMessageRooms: exsync.NewRingBuffer[networkid.MessageID, networkid.PortalKey](32),
 		chatMigrateSender:  exsync.NewMap[int64, bridgev2.EventSender](),
 
@@ -675,4 +684,43 @@ func (tc *TelegramClient) FillBridgeState(state status.BridgeState) status.Bridg
 	state.Info["is_bot"] = tc.metadata.IsBot
 	state.Info["login_method"] = tc.metadata.LoginMethod
 	return state
+}
+
+const rejectionTTL = 12 * time.Hour
+
+func (tc *TelegramClient) RejectPeer(portalID networkid.PortalID, reason string) {
+	if portalID == "" {
+		return
+	}
+	tc.rejectedPeersLock.Lock()
+	defer tc.rejectedPeersLock.Unlock()
+	tc.rejectedPeers[portalID] = rejectionInfo{
+		reason: reason,
+		expiry: time.Now().Add(rejectionTTL),
+	}
+}
+
+func (tc *TelegramClient) UnrejectPeer(portalID networkid.PortalID) {
+	if portalID == "" {
+		return
+	}
+	tc.rejectedPeersLock.Lock()
+	defer tc.rejectedPeersLock.Unlock()
+	delete(tc.rejectedPeers, portalID)
+}
+
+func (tc *TelegramClient) GetPeerRejection(portalID networkid.PortalID) (string, bool) {
+	if portalID == "" {
+		return "", false
+	}
+	tc.rejectedPeersLock.RLock()
+	defer tc.rejectedPeersLock.RUnlock()
+	info, ok := tc.rejectedPeers[portalID]
+	if !ok {
+		return "", false
+	}
+	if time.Now().After(info.expiry) {
+		return "", false
+	}
+	return info.reason, true
 }

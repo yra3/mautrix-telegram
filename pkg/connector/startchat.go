@@ -43,6 +43,7 @@ var (
 )
 
 func (tc *TelegramClient) resolveUser(ctx context.Context, user tg.UserClass) (*bridgev2.ResolveIdentifierResponse, error) {
+	tc.UnrejectPeer(ids.MakePortalID(ids.PeerTypeUser, user.GetID()))
 	networkUserID := ids.MakeUserID(user.GetID())
 	if ghost, err := tc.main.Bridge.GetGhostByID(ctx, networkUserID); err != nil {
 		return nil, fmt.Errorf("failed to get ghost: %w", err)

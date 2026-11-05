@@ -597,6 +597,11 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 		return nil, err
 	}
 
+	basePortalID := ids.MakePortalID(peerType, id)
+	if reason, ok := tc.GetPeerRejection(basePortalID); ok && portal.MXID == "" {
+		return nil, fmt.Errorf("%s (cached rejection for 12h)", reason)
+	}
+
 	switch peerType {
 	case ids.PeerTypeUser:
 		if portal.MXID == "" && id != tc.telegramUserID {
@@ -604,7 +609,9 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 				user, err := tc.getSingleUser(ctx, id)
 				if err == nil {
 					if u, ok := user.(*tg.User); ok && u.GetBot() {
-						return nil, fmt.Errorf("bot %d chat bridging is disabled", id)
+						err := fmt.Errorf("bot %d chat bridging is disabled", id)
+						tc.RejectPeer(basePortalID, err.Error())
+						return nil, err
 					}
 				}
 			}
@@ -616,7 +623,9 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 					})
 					if errFull == nil && fullUser != nil {
 						if folderID, ok := fullUser.FullUser.GetFolderID(); ok && folderID != 0 {
-							return nil, fmt.Errorf("user %d is in archive (folder %d)", id, folderID)
+							err := fmt.Errorf("user %d is in archive (folder %d)", id, folderID)
+							tc.RejectPeer(basePortalID, err.Error())
+							return nil, err
 						}
 					}
 				}
@@ -633,11 +642,19 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 		if portal.MXID == "" && !tc.main.Config.BridgeArchived {
 			if cf, ok := fullChat.FullChat.(*tg.ChatFull); ok {
 				if folderID, ok := cf.GetFolderID(); ok && folderID != 0 {
-					return nil, fmt.Errorf("chat %d is in archive (folder %d)", id, folderID)
+					err := fmt.Errorf("chat %d is in archive (folder %d)", id, folderID)
+					tc.RejectPeer(basePortalID, err.Error())
+					return nil, err
 				}
 			}
 		}
 		info, _, err := tc.wrapFullChatInfo(portal.ID, fullChat)
+		if err != nil {
+			if portal.MXID == "" {
+				tc.RejectPeer(basePortalID, err.Error())
+			}
+			return nil, err
+		}
 		return info, err
 	case ids.PeerTypeChannel:
 		accessHash, err := tc.ScopedStore.GetAccessHash(ctx, ids.PeerTypeChannel, id)
@@ -659,7 +676,9 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 				return nil, err
 			}
 			if channel != nil && channel.ParticipantsCount > 0 && !tc.main.Config.ShouldBridge(channel.ParticipantsCount) {
-				return nil, fmt.Errorf("too many participants (%d) in forum %d", channel.ParticipantsCount, id)
+				err := fmt.Errorf("too many participants (%d) in forum %d", channel.ParticipantsCount, id)
+				tc.RejectPeer(basePortalID, err.Error())
+				return nil, err
 			}
 			if channel != nil && channel.Forum && tc.main.Config.MaxMemberCount > 0 && channel.ParticipantsCount == 0 {
 				// If ParticipantsCount is unpopulated in basic channel, fetch full channel to verify member count
@@ -672,17 +691,24 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 				if cf, ok := fullChat.FullChat.(*tg.ChannelFull); ok {
 					if portal.MXID == "" && !tc.main.Config.BridgeArchived {
 						if folderID, ok := cf.GetFolderID(); ok && folderID != 0 {
-							return nil, fmt.Errorf("forum %d is in archive (folder %d)", id, folderID)
+							err := fmt.Errorf("forum %d is in archive (folder %d)", id, folderID)
+							tc.RejectPeer(basePortalID, err.Error())
+							return nil, err
 						}
 					}
 					if !tc.main.Config.ShouldBridge(cf.ParticipantsCount) {
-						return nil, fmt.Errorf("too many participants (%d) in forum %d", cf.ParticipantsCount, id)
+						err := fmt.Errorf("too many participants (%d) in forum %d", cf.ParticipantsCount, id)
+						tc.RejectPeer(basePortalID, err.Error())
+						return nil, err
 					}
 					channel.ParticipantsCount = cf.ParticipantsCount
 				}
 			}
 			info, mfm, err := tc.wrapChatInfo(portal.ID, channel)
 			if err != nil {
+				if portal.MXID == "" {
+					tc.RejectPeer(basePortalID, err.Error())
+				}
 				return nil, err
 			}
 			tc.overrideChatInfoWithTopic(info, topic)
@@ -701,12 +727,17 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 		if portal.MXID == "" && !tc.main.Config.BridgeArchived {
 			if cf, ok := fullChat.FullChat.(*tg.ChannelFull); ok {
 				if folderID, ok := cf.GetFolderID(); ok && folderID != 0 {
-					return nil, fmt.Errorf("channel %d is in archive (folder %d)", id, folderID)
+					err := fmt.Errorf("channel %d is in archive (folder %d)", id, folderID)
+					tc.RejectPeer(basePortalID, err.Error())
+					return nil, err
 				}
 			}
 		}
 		info, mfm, err := tc.wrapFullChatInfo(portal.ID, fullChat)
 		if err != nil {
+			if portal.MXID == "" {
+				tc.RejectPeer(basePortalID, err.Error())
+			}
 			return nil, err
 		}
 		err = tc.fillChannelMembers(ctx, mfm, info.Members)

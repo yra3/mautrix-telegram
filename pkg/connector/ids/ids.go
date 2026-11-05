@@ -204,6 +204,22 @@ func InternalMakePortalKey(pt PeerType, chatID int64, topicID int, receiver netw
 	return portalKey
 }
 
+func PeerToBasePortalID(peer tg.PeerClass) networkid.PortalID {
+	if peer == nil {
+		return ""
+	}
+	switch v := peer.(type) {
+	case *tg.PeerUser:
+		return MakePortalID(PeerTypeUser, v.UserID)
+	case *tg.PeerChat:
+		return MakePortalID(PeerTypeChat, v.ChatID)
+	case *tg.PeerChannel:
+		return MakePortalID(PeerTypeChannel, v.ChannelID)
+	default:
+		return ""
+	}
+}
+
 func InternalPeerToPortalKey(peer tg.PeerClass, topicID int, receiver networkid.UserLoginID) networkid.PortalKey {
 	switch v := peer.(type) {
 	case *tg.PeerUser:

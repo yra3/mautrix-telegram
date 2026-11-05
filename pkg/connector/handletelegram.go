@@ -259,6 +259,28 @@ func (tc *TelegramClient) onViewLimitedMediaRead(ctx context.Context, update *tg
 
 func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.Entities, update IGetMessage) error {
 	log := *zerolog.Ctx(ctx)
+	msgClass := update.GetMessage()
+	var msgPeer tg.PeerClass
+	switch m := msgClass.(type) {
+	case *tg.Message:
+		msgPeer = m.GetPeerID()
+	case *tg.MessageService:
+		msgPeer = m.GetPeerID()
+	}
+	if msgPeer != nil {
+		basePortalID := ids.PeerToBasePortalID(msgPeer)
+		if reason, ok := tc.GetPeerRejection(basePortalID); ok {
+			portalKey := tc.makePortalKeyFromPeer(msgPeer, 0)
+			portal, _ := tc.main.Bridge.GetExistingPortalByKey(ctx, portalKey)
+			if portal == nil || portal.MXID == "" {
+				log.Debug().
+					Stringer("peer_id", msgPeer).
+					Str("reason", reason).
+					Msg("Ignoring message for rejected peer (12h TTL)")
+				return nil
+			}
+		}
+	}
 	switch msg := update.GetMessage().(type) {
 	case *tg.Message:
 		var isBroadcastChannel bool
@@ -1096,6 +1118,14 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 		return tc.onOwnReadReceipt(tc.makePortalKeyFromID(ids.PeerTypeChannel, update.ChannelID, 0), update.MaxID)
 	case *tg.UpdateNotifySettings:
 		return tc.onNotifySettings(ctx, e, update)
+	case *tg.UpdateFolderPeers:
+		for _, fp := range update.FolderPeers {
+			basePortalID := ids.PeerToBasePortalID(fp.Peer)
+			if fp.FolderID == 0 && basePortalID != "" {
+				tc.UnrejectPeer(basePortalID)
+			}
+		}
+		return nil
 	case *tg.UpdatePinnedDialogs:
 		return tc.onPinnedDialogs(ctx, e, update)
 	case *tg.UpdateChatDefaultBannedRights:
