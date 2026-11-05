@@ -636,12 +636,14 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 				fullChat, errFull := APICallWithUpdates(ctx, tc, func() (*tg.MessagesChatFull, error) {
 					return tc.client.API().ChannelsGetFullChannel(ctx, &tg.InputChannel{ChannelID: id, AccessHash: accessHash})
 				})
-				if errFull == nil && fullChat != nil {
-					if cf, ok := fullChat.FullChat.(*tg.ChannelFull); ok {
-						if !tc.main.Config.ShouldBridge(cf.ParticipantsCount) {
-							return nil, fmt.Errorf("too many participants (%d) in forum %d", cf.ParticipantsCount, id)
-						}
+				if errFull != nil {
+					return nil, fmt.Errorf("failed to get full channel to check member count: %w", errFull)
+				}
+				if cf, ok := fullChat.FullChat.(*tg.ChannelFull); ok {
+					if !tc.main.Config.ShouldBridge(cf.ParticipantsCount) {
+						return nil, fmt.Errorf("too many participants (%d) in forum %d", cf.ParticipantsCount, id)
 					}
+					channel.ParticipantsCount = cf.ParticipantsCount
 				}
 			}
 			info, mfm, err := tc.wrapChatInfo(portal.ID, channel)
