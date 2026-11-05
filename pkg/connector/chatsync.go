@@ -327,6 +327,20 @@ func (tc *TelegramClient) syncNormalDialog(
 	if err != nil {
 		return err
 	}
+	if portal.MXID == "" && !tc.main.Config.BridgeArchived {
+		if folderID, ok := dialog.GetFolderID(); ok && folderID != 0 {
+			log.Debug().Int("folder_id", folderID).Msg("Not syncing portal because dialog is in archive")
+			return nil
+		}
+	}
+	if portal.MXID == "" && !tc.main.Config.BridgeBots {
+		if peer, ok := dialog.Peer.(*tg.PeerUser); ok {
+			if user, ok := users[peer.UserID].(*tg.User); ok && user.GetBot() {
+				log.Debug().Int64("user_id", peer.UserID).Msg("Not syncing portal because user is a bot")
+				return nil
+			}
+		}
+	}
 	if dialog.UnreadCount == 0 && !dialog.UnreadMark {
 		portal.Metadata.(*PortalMetadata).ReadUpTo = dialog.TopMessage
 	}

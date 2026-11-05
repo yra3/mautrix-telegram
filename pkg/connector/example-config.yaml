@@ -139,3 +139,7 @@ extev_polls: false
 # {{ .UserID }} - the internal user ID of the Telegram user
 # {{ .Deleted }} - true if the user has been deleted, false otherwise
 displayname_template: "{{ if .Deleted }}Deleted account {{ .UserID }}{{ else }}{{ .FullName }}{{ end }}"
+# Whether to automatically bridge chats with bots (false = only when started with !tg pm).
+bridge_bots: false
+# Whether to bridge chats/channels in Telegram archive (folder_id != 0).
+bridge_archived: false

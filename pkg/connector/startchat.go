@@ -54,12 +54,14 @@ func (tc *TelegramClient) resolveUser(ctx context.Context, user tg.UserClass) (*
 }
 
 func (tc *TelegramClient) makeResolveIdentifierResponse(ghost *bridgev2.Ghost, user tg.UserClass, info *bridgev2.UserInfo) *bridgev2.ResolveIdentifierResponse {
+	chatInfo, _ := tc.getDMChatInfo(user.GetID())
 	return &bridgev2.ResolveIdentifierResponse{
 		Ghost:    ghost,
 		UserID:   ids.MakeUserID(user.GetID()),
 		UserInfo: info,
 		Chat: &bridgev2.CreateChatResponse{
-			PortalKey: tc.makePortalKeyFromID(ids.PeerTypeUser, user.GetID(), 0),
+			PortalKey:  tc.makePortalKeyFromID(ids.PeerTypeUser, user.GetID(), 0),
+			PortalInfo: chatInfo,
 		},
 	}
 }

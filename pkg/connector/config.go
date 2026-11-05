@@ -103,6 +103,8 @@ type TelegramConfig struct {
 	BridgeCommunities                    bool                `yaml:"bridge_communities"`
 	ExtEvPolls                           bool                `yaml:"extev_polls"`
 	DisplaynameTemplate                  string              `yaml:"displayname_template"`
+	BridgeBots                           bool                `yaml:"bridge_bots"`
+	BridgeArchived                       bool                `yaml:"bridge_archived"`
 	displaynameTemplate                  *template.Template  `yaml:"-"`
 }
 
@@ -202,6 +204,8 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "bridge_communities")
 	helper.Copy(up.Bool, "extev_polls")
 	helper.Copy(up.Str, "displayname_template")
+	helper.Copy(up.Bool, "bridge_bots")
+	helper.Copy(up.Bool, "bridge_archived")
 }
 
 func (tc *TelegramConnector) GetConfig() (example string, data any, upgrader up.Upgrader) {
