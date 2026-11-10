@@ -92,6 +92,7 @@ type TelegramConfig struct {
 
 	ContactAvatars                       bool                `yaml:"contact_avatars"`
 	ContactNames                         bool                `yaml:"contact_names"`
+	IgnoreContactNames                   bool                `yaml:"ignore_contact_names"`
 	MaxMemberCount                       int                 `yaml:"max_member_count"`
 	MaxTelegramDelete                    int                 `yaml:"max_telegram_delete"`
 	AlwaysCustomEmojiReaction            bool                `yaml:"always_custom_emoji_reaction"`
@@ -193,6 +194,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "takeout", "backward_backfill")
 	helper.Copy(up.Bool, "contact_avatars")
 	helper.Copy(up.Bool, "contact_names")
+	helper.Copy(up.Bool, "ignore_contact_names")
 	helper.Copy(up.Int, "max_member_count")
 	helper.Copy(up.Int, "max_telegram_delete")
 	helper.Copy(up.Bool, "always_custom_emoji_reaction")

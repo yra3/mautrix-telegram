@@ -268,33 +268,74 @@ func (tc *TelegramClient) wrapUserInfo(ctx context.Context, u tg.UserClass, ghos
 		}
 	}
 
-	name := tc.main.Config.FormatDisplayname(user.FirstName, user.LastName, user.Username, user.Deleted, user.ID)
-	namePtr := &name
-	if user.Contact && ghost.Name != "" && oldMeta.ContactSource != tc.telegramUserID && oldMeta.ContactSource != 0 && !tc.main.Config.ContactNames {
-		namePtr = nil
-	}
-	if user.Min && !oldMeta.IsMin() && ghost.Name != "" {
-		namePtr = nil
-	}
+	namePtr := tc.resolveUserDisplayname(user, ghost)
 	return &bridgev2.UserInfo{
 		IsBot:       &user.Bot,
 		Name:        namePtr,
 		Avatar:      avatar,
 		Identifiers: identifiers,
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) (changed bool) {
-			meta := ghost.Metadata.(*GhostMetadata)
-			if !user.Min {
-				changed = changed || meta.IsPremium != user.Premium || meta.Deleted != user.Deleted || meta.IsMin()
-				meta.IsPremium = user.Premium
-				meta.Deleted = user.Deleted
-				meta.NotMin = true
-				if meta.ContactSource == 0 || meta.ContactSource == tc.telegramUserID || (!user.Contact && meta.SourceIsContact) {
-					changed = changed || meta.ContactSource != tc.telegramUserID || meta.SourceIsContact != user.Contact
-					meta.ContactSource = tc.telegramUserID
-					meta.SourceIsContact = user.Contact
-				}
-			}
-			return changed
+			return tc.applyUserGhostMetadata(user, ghost.Metadata.(*GhostMetadata))
 		},
 	}, nil
+}
+
+func (tc *TelegramClient) resolveUserDisplayname(user *tg.User, ghost *bridgev2.Ghost) *string {
+	oldMeta := ghost.Metadata.(*GhostMetadata)
+	username := user.Username
+	if username == "" {
+		for _, uname := range user.Usernames {
+			if uname.Active {
+				username = uname.Username
+				break
+			}
+		}
+	}
+
+	var name string
+	if tc.main.Config.IgnoreContactNames && user.Contact && !user.Self {
+		if user.Deleted {
+			name = tc.main.Config.FormatDisplayname("", "", username, true, user.ID)
+			return &name
+		} else if ghost.Name != "" && !oldMeta.SourceIsContact {
+			return nil
+		} else if username != "" {
+			name = tc.main.Config.FormatDisplayname("@"+username, "", username, false, user.ID)
+			return &name
+		}
+		name = tc.main.Config.FormatDisplayname(fmt.Sprintf("Telegram %d", user.ID), "", "", false, user.ID)
+		return &name
+	}
+
+	name = tc.main.Config.FormatDisplayname(user.FirstName, user.LastName, username, user.Deleted, user.ID)
+	if user.Contact && ghost.Name != "" && oldMeta.ContactSource != tc.telegramUserID && oldMeta.ContactSource != 0 && !tc.main.Config.ContactNames {
+		return nil
+	}
+	if user.Min && !oldMeta.IsMin() && ghost.Name != "" && (!tc.main.Config.IgnoreContactNames || !oldMeta.SourceIsContact) {
+		return nil
+	}
+	if user.Min && user.FirstName == "" && user.LastName == "" && !user.Deleted && ghost.Name != "" {
+		return nil
+	}
+	return &name
+}
+
+func (tc *TelegramClient) applyUserGhostMetadata(user *tg.User, meta *GhostMetadata) (changed bool) {
+	if !user.Min {
+		changed = changed || meta.IsPremium != user.Premium || meta.Deleted != user.Deleted || meta.IsMin()
+		meta.IsPremium = user.Premium
+		meta.Deleted = user.Deleted
+		meta.NotMin = true
+		isContact := user.Contact && (!tc.main.Config.IgnoreContactNames || !user.Self)
+		if meta.ContactSource == 0 || (meta.ContactSource == tc.telegramUserID && (!tc.main.Config.IgnoreContactNames || !isContact || meta.SourceIsContact)) || (!isContact && meta.SourceIsContact) {
+			changed = changed || meta.ContactSource != tc.telegramUserID || meta.SourceIsContact != isContact
+			meta.ContactSource = tc.telegramUserID
+			meta.SourceIsContact = isContact
+		}
+	} else if tc.main.Config.IgnoreContactNames && meta.SourceIsContact && (user.FirstName != "" || user.LastName != "" || user.Deleted) {
+		meta.SourceIsContact = false
+		meta.ContactSource = 0
+		changed = true
+	}
+	return changed
 }

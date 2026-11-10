@@ -909,9 +909,30 @@ func (tc *TelegramClient) onUserName(ctx context.Context, e tg.Entities, update 
 
 	name := tc.main.Config.FormatDisplayname(update.FirstName, update.LastName, firstUsername, false, update.UserID)
 	userInfo.Name = &name
-	if meta.ContactSource != 0 && meta.ContactSource != tc.telegramUserID && !tc.main.Config.ContactNames {
+	if meta.ContactSource != 0 && meta.ContactSource != tc.telegramUserID && !tc.main.Config.ContactNames && (!tc.main.Config.IgnoreContactNames || !meta.SourceIsContact) {
 		// TODO fetch full info to accurately detect if the user is a contact or not
 		userInfo.Name = nil
+	}
+	if tc.main.Config.IgnoreContactNames && update.UserID != tc.telegramUserID && userInfo.Name != nil {
+		if u, ok := e.Users[update.UserID]; ok && u != nil && !u.Min {
+			if u.Contact && !u.Self {
+				userInfo.Name = nil
+			}
+		} else if u, err := tc.getSingleUser(ctx, update.UserID); err == nil {
+			if tgUser, ok := u.(*tg.User); ok && tgUser.Contact && !tgUser.Self {
+				userInfo.Name = tc.resolveUserDisplayname(tgUser, ghost)
+			}
+		} else {
+			userInfo.Name = nil
+		}
+		if userInfo.Name != nil && meta.SourceIsContact {
+			userInfo.ExtraUpdates = func(ctx context.Context, ghost *bridgev2.Ghost) bool {
+				m := ghost.Metadata.(*GhostMetadata)
+				m.SourceIsContact = false
+				m.ContactSource = tc.telegramUserID
+				return true
+			}
+		}
 	}
 
 	ghost.UpdateInfo(ctx, &userInfo)
