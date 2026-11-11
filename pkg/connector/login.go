@@ -125,23 +125,23 @@ func loginContextError(ctx context.Context) error {
 func (tc *TelegramConnector) GetLoginFlows() []bridgev2.LoginFlow {
 	return []bridgev2.LoginFlow{
 		{
-			Name:        "Phone Number",
-			Description: "Login using your Telegram phone number",
+			Name:        tc.tr("Phone Number", "Номер телефона"),
+			Description: tc.tr("Login using your Telegram phone number", "Войти по номеру телефона Telegram"),
 			ID:          LoginFlowIDPhone,
 		},
 		{
-			Name:        "QR Code",
-			Description: "Login by scanning a QR code from your phone",
+			Name:        tc.tr("QR Code", "QR-код"),
+			Description: tc.tr("Login by scanning a QR code from your phone", "Войти, отсканировав QR-код с телефона"),
 			ID:          LoginFlowIDQR,
 		},
 		{
-			Name:        "Bot token",
-			Description: "Log in as a bot using the bot token provided by BotFather",
+			Name:        tc.tr("Bot token", "Токен бота"),
+			Description: tc.tr("Log in as a bot using the bot token provided by BotFather", "Войти как бот с помощью токена от BotFather"),
 			ID:          LoginFlowIDBotToken,
 		},
 		{
-			Name:        "Manual",
-			Description: "Log in using existing session credentials (advanced, do not use)",
+			Name:        tc.tr("Manual", "Вручную"),
+			Description: tc.tr("Log in using existing session credentials (advanced, do not use)", "Войти по готовым данным сессии (для опытных пользователей)"),
 			ID:          LoginFlowIDManual,
 		},
 	}
@@ -231,42 +231,53 @@ func (bl *baseLogin) makeClient(ctx context.Context, dispatcher *tg.UpdateDispat
 	return nil
 }
 
-var passwordLoginStep = &bridgev2.LoginStep{
-	Type:         bridgev2.LoginStepTypeUserInput,
-	StepID:       LoginStepIDPassword,
-	Instructions: "You have two-factor authentication enabled.",
-	UserInputParams: &bridgev2.LoginUserInputParams{
-		Fields: []bridgev2.LoginInputDataField{{
-			Type: bridgev2.LoginInputFieldTypePassword,
-			ID:   LoginStepIDPassword,
-			Name: "Password",
-		}},
-	},
+func (bl *baseLogin) passwordLoginStep() *bridgev2.LoginStep {
+	return &bridgev2.LoginStep{
+		Type:         bridgev2.LoginStepTypeUserInput,
+		StepID:       LoginStepIDPassword,
+		Instructions: bl.main.tr("You have two-factor authentication enabled.", "У вас включена двухфакторная аутентификация."),
+		UserInputParams: &bridgev2.LoginUserInputParams{
+			Fields: []bridgev2.LoginInputDataField{{
+				Type: bridgev2.LoginInputFieldTypePassword,
+				ID:   LoginStepIDPassword,
+				Name: bl.main.tr("Password", "Пароль"),
+			}},
+		},
+	}
 }
 
-var passwordIncorrectLoginStep = &bridgev2.LoginStep{
-	Type:         bridgev2.LoginStepTypeUserInput,
-	StepID:       LoginStepIDPasswordIncorrect,
-	Instructions: "Incorrect password, please try again. Use the official Telegram app to reset your password if you've forgotten it.",
-	UserInputParams: &bridgev2.LoginUserInputParams{
-		Fields: []bridgev2.LoginInputDataField{{
-			Type: bridgev2.LoginInputFieldTypePassword,
-			ID:   LoginStepIDPassword,
-			Name: "Password",
-		}},
-	},
+func (bl *baseLogin) passwordIncorrectLoginStep() *bridgev2.LoginStep {
+	return &bridgev2.LoginStep{
+		Type:         bridgev2.LoginStepTypeUserInput,
+		StepID:       LoginStepIDPasswordIncorrect,
+		Instructions: bl.main.tr("Incorrect password, please try again. Use the official Telegram app to reset your password if you've forgotten it.", "Неверный пароль, попробуйте ещё раз. Если вы забыли пароль, сбросьте его в официальном приложении Telegram."),
+		UserInputParams: &bridgev2.LoginUserInputParams{
+			Fields: []bridgev2.LoginInputDataField{{
+				Type: bridgev2.LoginInputFieldTypePassword,
+				ID:   LoginStepIDPassword,
+				Name: bl.main.tr("Password", "Пароль"),
+			}},
+		},
+	}
+}
+
+func (bl *baseLogin) loginContextError(ctx context.Context) error {
+	if errors.Is(context.Cause(ctx), ErrLoginTimeout) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return bl.main.respErr(ErrLoginTimedOut, "Время ожидания входа истекло, начните заново")
+	}
+	return ctx.Err()
 }
 
 func (bl *baseLogin) submitPassword(ctx context.Context, password, loginPhone string) (*bridgev2.LoginStep, error) {
 	if bl.client == nil {
 		return nil, fmt.Errorf("unexpected state: client is nil when submitting password")
 	} else if password == "" {
-		return nil, ErrPasswordNotProvided
+		return nil, bl.main.respErr(ErrPasswordNotProvided, "Пароль не указан")
 	}
 	authorization, err := bl.client.Auth().Password(ctx, password)
 	if err != nil {
 		if errors.Is(err, auth.ErrPasswordInvalid) {
-			return passwordIncorrectLoginStep, nil
+			return bl.passwordIncorrectLoginStep(), nil
 		}
 		bl.Cancel()
 		return nil, loginRespError(ctx, fmt.Errorf("failed to submit password: %w", err))
@@ -362,7 +373,7 @@ func (bl *baseLogin) finalizeLogin(
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       LoginStepIDComplete,
-		Instructions: fmt.Sprintf("Successfully logged in as %s (`%d`)", ul.RemoteName, self.ID),
+		Instructions: bl.main.trf("Successfully logged in as %s (`%d`)", "Вход выполнен успешно: %s (`%d`)", ul.RemoteName, self.ID),
 		CompleteParams: &bridgev2.LoginCompleteParams{
 			UserLoginID: ul.ID,
 			UserLogin:   ul,

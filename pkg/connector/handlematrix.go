@@ -403,7 +403,7 @@ func (tc *TelegramClient) humaniseSendError(err error) error {
 	}
 	tgErr, ok := tgerr.As(err)
 	if !ok {
-		return bridgev2.WrapErrorInStatus(err).WithMessage("failed to reach Telegram")
+		return bridgev2.WrapErrorInStatus(err).WithMessage(tc.main.tr("failed to reach Telegram", "не удалось связаться с Telegram"))
 	}
 	status := bridgev2.WrapErrorInStatus(err).
 		WithErrorReason(event.MessageStatusNetworkError).

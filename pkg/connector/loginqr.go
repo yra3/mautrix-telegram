@@ -53,7 +53,7 @@ var ErrLoginTimeout = errors.New("login process timed out")
 func (ql *QRLogin) StartWithOverride(ctx context.Context, override *bridgev2.UserLogin) (*bridgev2.LoginStep, error) {
 	meta := override.Metadata.(*UserLoginMetadata)
 	if meta.IsBot {
-		return nil, fmt.Errorf("can't re-login to a bot account with QR login")
+		return nil, fmt.Errorf("%s", ql.main.tr("can't re-login to a bot account with QR login", "нельзя повторно войти в аккаунт бота по QR-коду"))
 	}
 	return ql.Start(ctx)
 }
@@ -94,7 +94,7 @@ func (ql *QRLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 		return &bridgev2.LoginStep{
 			Type:         bridgev2.LoginStepTypeDisplayAndWait,
 			StepID:       LoginStepIDShowQR,
-			Instructions: "Scan the QR code on your phone to log in",
+			Instructions: ql.main.tr("Scan the QR code on your phone to log in", "Отсканируйте QR-код с телефона для входа"),
 			DisplayAndWaitParams: &bridgev2.LoginDisplayAndWaitParams{
 				Type: bridgev2.LoginDisplayTypeQR,
 				Data: token.URL(),
@@ -102,9 +102,9 @@ func (ql *QRLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 		}, nil
 	case <-ctx.Done():
 		ql.Cancel()
-		return nil, loginContextError(ctx)
+		return nil, ql.loginContextError(ctx)
 	case <-ql.ctx.Done():
-		return nil, loginContextError(ql.ctx)
+		return nil, ql.loginContextError(ql.ctx)
 	}
 }
 
@@ -119,7 +119,7 @@ func (ql *QRLogin) Wait(ctx context.Context) (*bridgev2.LoginStep, error) {
 		return &bridgev2.LoginStep{
 			Type:         bridgev2.LoginStepTypeDisplayAndWait,
 			StepID:       LoginStepIDShowQR,
-			Instructions: "Scan the QR code on your phone to log in",
+			Instructions: ql.main.tr("Scan the QR code on your phone to log in", "Отсканируйте QR-код с телефона для входа"),
 			DisplayAndWaitParams: &bridgev2.LoginDisplayAndWaitParams{
 				Type: bridgev2.LoginDisplayTypeQR,
 				Data: token.URL(),
@@ -127,7 +127,7 @@ func (ql *QRLogin) Wait(ctx context.Context) (*bridgev2.LoginStep, error) {
 		}, nil
 	case authResult := <-ql.auth:
 		if tgerr.Is(authResult.Error, "SESSION_PASSWORD_NEEDED") {
-			return passwordLoginStep, nil
+			return ql.passwordLoginStep(), nil
 		} else if authResult.Error != nil {
 			ql.Cancel()
 			return nil, loginRespError(ctx, fmt.Errorf("failed to authenticate: %w", authResult.Error))
@@ -136,9 +136,9 @@ func (ql *QRLogin) Wait(ctx context.Context) (*bridgev2.LoginStep, error) {
 		return ql.finalizeLogin(ctx, authResult.Authorization, nil)
 	case <-ctx.Done():
 		ql.Cancel()
-		return nil, loginContextError(ctx)
+		return nil, ql.loginContextError(ctx)
 	case <-ql.ctx.Done():
-		return nil, loginContextError(ql.ctx)
+		return nil, ql.loginContextError(ql.ctx)
 	}
 }
 

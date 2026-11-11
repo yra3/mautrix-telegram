@@ -113,6 +113,8 @@ contact_names: false
 # Should personal contact names from a user's address book be completely ignored?
 # When true, only public profile names (or @username / user ID fallback) are used.
 ignore_contact_names: false
+# Language for bridge bot messages and command descriptions (en or ru).
+language: en
 # Should the bridge send all unicode reactions as custom emoji reactions to
 # Telegram? By default, the bridge only uses custom emojis for unicode emojis
 # that aren't allowed in reactions.

@@ -93,6 +93,7 @@ type TelegramConfig struct {
 	ContactAvatars                       bool                `yaml:"contact_avatars"`
 	ContactNames                         bool                `yaml:"contact_names"`
 	IgnoreContactNames                   bool                `yaml:"ignore_contact_names"`
+	Language                             string              `yaml:"language"`
 	MaxMemberCount                       int                 `yaml:"max_member_count"`
 	MaxTelegramDelete                    int                 `yaml:"max_telegram_delete"`
 	AlwaysCustomEmojiReaction            bool                `yaml:"always_custom_emoji_reaction"`
@@ -153,6 +154,10 @@ func (c *TelegramConfig) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (c *TelegramConfig) PostProcess() error {
+	c.Language = strings.ToLower(strings.TrimSpace(c.Language))
+	if c.Language == "" {
+		c.Language = "en"
+	}
 	var err error
 	c.displaynameTemplate, err = template.New("displayname").Parse(c.DisplaynameTemplate)
 	return err
@@ -195,6 +200,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "contact_avatars")
 	helper.Copy(up.Bool, "contact_names")
 	helper.Copy(up.Bool, "ignore_contact_names")
+	helper.Copy(up.Str, "language")
 	helper.Copy(up.Int, "max_member_count")
 	helper.Copy(up.Int, "max_telegram_delete")
 	helper.Copy(up.Bool, "always_custom_emoji_reaction")
@@ -236,6 +242,9 @@ func (tc *TelegramConnector) ValidateConfig() error {
 	}
 	if !slices.Contains([]string{"disable", "gif", "png", "webp", "webm"}, tc.Config.AnimatedSticker.Target) {
 		return fmt.Errorf("unsupported animated sticker target: %s", tc.Config.AnimatedSticker.Target)
+	}
+	if !slices.Contains([]string{"en", "ru"}, tc.Config.Language) {
+		return fmt.Errorf("unsupported language: %s (supported: en, ru)", tc.Config.Language)
 	}
 	return nil
 }

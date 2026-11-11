@@ -40,7 +40,7 @@ type BotLogin struct {
 func (bl *BotLogin) StartWithOverride(ctx context.Context, override *bridgev2.UserLogin) (*bridgev2.LoginStep, error) {
 	meta := override.Metadata.(*UserLoginMetadata)
 	if !meta.IsBot {
-		return nil, fmt.Errorf("can't re-login to a non-bot account with bot token")
+		return nil, fmt.Errorf("%s", bl.main.tr("can't re-login to a non-bot account with bot token", "нельзя повторно войти в обычный аккаунт с помощью токена бота"))
 	}
 	return bl.Start(ctx)
 }
@@ -49,12 +49,12 @@ func (bl *BotLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeUserInput,
 		StepID:       LoginStepIDBotToken,
-		Instructions: "Please enter the bot token you want to log in as",
+		Instructions: bl.main.tr("Please enter the bot token you want to log in as", "Введите токен бота, от имени которого нужно войти"),
 		UserInputParams: &bridgev2.LoginUserInputParams{
 			Fields: []bridgev2.LoginInputDataField{{
 				Type:    bridgev2.LoginInputFieldTypeToken,
 				ID:      LoginStepIDBotToken,
-				Name:    "Bot token",
+				Name:    bl.main.tr("Bot token", "Токен бота"),
 				Pattern: `^\d+:[A-Za-z0-9_-]{35}$`,
 			}},
 		},

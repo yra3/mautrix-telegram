@@ -53,7 +53,7 @@ var (
 func (pl *PhoneLogin) StartWithOverride(ctx context.Context, override *bridgev2.UserLogin) (*bridgev2.LoginStep, error) {
 	meta := override.Metadata.(*UserLoginMetadata)
 	if meta.IsBot {
-		return nil, fmt.Errorf("can't re-login to a bot account with phone login")
+		return nil, fmt.Errorf("%s", pl.main.tr("can't re-login to a bot account with phone login", "нельзя повторно войти в аккаунт бота по номеру телефона"))
 	}
 	phone := cmp.Or(meta.LoginPhone, override.RemoteProfile.Phone)
 	if phone != "" {
@@ -72,8 +72,8 @@ func (pl *PhoneLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 			Fields: []bridgev2.LoginInputDataField{{
 				Type:        bridgev2.LoginInputFieldTypePhoneNumber,
 				ID:          LoginStepIDPhoneNumber,
-				Name:        "Phone number",
-				Description: "Include the country code with +",
+				Name:        pl.main.tr("Phone number", "Номер телефона"),
+				Description: pl.main.tr("Include the country code with +", "Укажите код страны, начиная с +"),
 			}},
 		},
 	}, nil
@@ -89,51 +89,53 @@ func (pl *PhoneLogin) SubmitUserInput(ctx context.Context, input map[string]stri
 	}
 }
 
-func phoneCodeStep(codeType tg.AuthSentCodeTypeClass) (*bridgev2.LoginStep, error) {
-	description := "The code was sent to the Telegram app on your phone"
+func (pl *PhoneLogin) phoneCodeStep(codeType tg.AuthSentCodeTypeClass) (*bridgev2.LoginStep, error) {
+	description := pl.main.tr("The code was sent to the Telegram app on your phone", "Код отправлен в приложение Telegram на вашем телефоне")
 	switch typedCodeType := codeType.(type) {
 	case *tg.AuthSentCodeTypeSMS, *tg.AuthSentCodeTypeSMSWord, *tg.AuthSentCodeTypeSMSPhrase:
-		description = "The code was sent to your phone via SMS"
+		description = pl.main.tr("The code was sent to your phone via SMS", "Код отправлен на ваш телефон по SMS")
 	case *tg.AuthSentCodeTypeCall:
-		description = "The code will be read to you in a phone call"
+		description = pl.main.tr("The code will be read to you in a phone call", "Код будет продиктован вам по телефону")
 	case *tg.AuthSentCodeTypeEmailCode:
-		description = fmt.Sprintf("The code was sent to your email (%s)", typedCodeType.EmailPattern)
+		description = pl.main.trf("The code was sent to your email (%s)", "Код отправлен на вашу почту (%s)", typedCodeType.EmailPattern)
 	case *tg.AuthSentCodeTypeFragmentSMS:
-		description = fmt.Sprintf("The code was sent to your Fragment account (%s)", typedCodeType.URL)
+		description = pl.main.trf("The code was sent to your Fragment account (%s)", "Код отправлен в ваш аккаунт Fragment (%s)", typedCodeType.URL)
 	case *tg.AuthSentCodeTypeSetUpEmailRequired:
-		return nil, ErrLoginEmailRequired
+		return nil, pl.main.respErr(ErrLoginEmailRequired, "Telegram требует настроить почту для входа — пожалуйста, войдите по QR-коду")
 	}
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeUserInput,
 		StepID:       LoginStepIDCode,
-		Instructions: "Enter the login code Telegram sent you",
+		Instructions: pl.main.tr("Enter the login code Telegram sent you", "Введите код подтверждения, отправленный Telegram"),
 		UserInputParams: &bridgev2.LoginUserInputParams{
 			Fields: []bridgev2.LoginInputDataField{{
 				Type:        bridgev2.LoginInputFieldType2FACode,
 				ID:          LoginStepIDCode,
-				Name:        "Code",
+				Name:        pl.main.tr("Code", "Код"),
 				Description: description,
 			}},
 		},
 	}, nil
 }
 
-var phoneCodeIncorrectStep = &bridgev2.LoginStep{
-	Type:         bridgev2.LoginStepTypeUserInput,
-	StepID:       LoginStepIDCodeIncorrect,
-	Instructions: "Incorrect code",
-	UserInputParams: &bridgev2.LoginUserInputParams{
-		Fields: []bridgev2.LoginInputDataField{{
-			Type: bridgev2.LoginInputFieldType2FACode,
-			ID:   LoginStepIDCode,
-			Name: "Code",
-		}},
-	},
+func (pl *PhoneLogin) phoneCodeIncorrectStep() *bridgev2.LoginStep {
+	return &bridgev2.LoginStep{
+		Type:         bridgev2.LoginStepTypeUserInput,
+		StepID:       LoginStepIDCodeIncorrect,
+		Instructions: pl.main.tr("Incorrect code", "Неверный код"),
+		UserInputParams: &bridgev2.LoginUserInputParams{
+			Fields: []bridgev2.LoginInputDataField{{
+				Type: bridgev2.LoginInputFieldType2FACode,
+				ID:   LoginStepIDCode,
+				Name: pl.main.tr("Code", "Код"),
+			}},
+		},
+	}
 }
 
 func (pl *PhoneLogin) submitNumber(ctx context.Context, phone string) (*bridgev2.LoginStep, error) {
 	if phone == "" {
-		return nil, ErrPhoneNumberNotProvided
+		return nil, pl.main.respErr(ErrPhoneNumberNotProvided, "Номер телефона не указан")
 	}
 	log := zerolog.Ctx(ctx).With().Str("component", "phone login").Logger()
 	ctx = log.WithContext(ctx)
@@ -156,13 +158,13 @@ func (pl *PhoneLogin) submitNumber(ctx context.Context, phone string) (*bridgev2
 			Type("next_type", s.NextType).
 			Int("timeout", s.Timeout).
 			Msg("Login code sent")
-		return phoneCodeStep(s.Type)
+		return pl.phoneCodeStep(s.Type)
 	case *tg.AuthSentCodeSuccess:
 		switch authorization := s.Authorization.(type) {
 		case *tg.AuthAuthorization:
 			return pl.finalizeLogin(ctx, authorization, &UserLoginMetadata{LoginPhone: pl.phone})
 		case *tg.AuthAuthorizationSignUpRequired:
-			return nil, ErrSignUpNotSupported
+			return nil, pl.main.respErr(ErrSignUpNotSupported, "Регистрация новых аккаунтов не поддерживается")
 		default:
 			return nil, fmt.Errorf("unexpected authorization type: %T", sentCode)
 		}
@@ -175,16 +177,16 @@ func (pl *PhoneLogin) submitCode(ctx context.Context, code string) (*bridgev2.Lo
 	if pl.client == nil {
 		return nil, fmt.Errorf("unexpected state: client is nil when submitting phone code")
 	} else if code == "" {
-		return phoneCodeStep(pl.codeType)
+		return pl.phoneCodeStep(pl.codeType)
 	}
 	authorization, err := pl.client.Auth().SignIn(ctx, pl.phone, code, pl.hash)
 	if errors.Is(err, auth.ErrPasswordAuthNeeded) {
 		pl.codeSubmitted = true
-		return passwordLoginStep, nil
+		return pl.passwordLoginStep(), nil
 	} else if errors.Is(err, auth.ErrPhoneCodeInvalid) {
-		return phoneCodeIncorrectStep, nil
+		return pl.phoneCodeIncorrectStep(), nil
 	} else if errors.Is(err, &auth.SignUpRequired{}) {
-		return nil, ErrSignUpNotSupported
+		return nil, pl.main.respErr(ErrSignUpNotSupported, "Регистрация новых аккаунтов не поддерживается")
 	} else if err != nil {
 		return nil, loginRespError(ctx, fmt.Errorf("failed to submit code: %w", err))
 	}

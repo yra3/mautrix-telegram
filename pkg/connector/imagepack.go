@@ -56,19 +56,19 @@ import (
 func (tc *TelegramClient) fnListEmojiPacks(ce *commands.Event) {
 	resp, err := tc.client.API().MessagesGetAllStickers(ce.Ctx, 0)
 	if err != nil {
-		ce.Reply("Failed to list image packs: %v", err)
+		ce.Reply(tc.main.tr("Failed to list image packs: %v", "Не удалось получить список наборов: %v"), err)
 		return
 	}
 	casted, ok := resp.(*tg.MessagesAllStickers)
 	if !ok {
-		ce.Reply("Unexpected response type: %T", resp)
+		ce.Reply(tc.main.tr("Unexpected response type: %T", "Неожиданный тип ответа: %T"), resp)
 		return
 	}
 	lines := make([]string, len(casted.Sets))
 	for i, set := range casted.Sets {
-		packType := "stickers"
+		packType := tc.main.tr("stickers", "стикеры")
 		if set.Emojis {
-			packType = "emojis"
+			packType = tc.main.tr("emojis", "эмодзи")
 		}
 		lines[i] = fmt.Sprintf(
 			"* %s (%s, %s)",
@@ -77,22 +77,22 @@ func (tc *TelegramClient) fnListEmojiPacks(ce *commands.Event) {
 			format.SafeMarkdownCode(set.ShortName),
 		)
 	}
-	ce.Reply("Your packs:\n\n%s", strings.Join(lines, "\n"))
+	ce.Reply(tc.main.tr("Your packs:\n\n%s", "Ваши наборы:\n\n%s"), strings.Join(lines, "\n"))
 }
 
 func (tc *TelegramClient) fnUploadEmojiPack(ce *commands.Event) {
 	if len(ce.Args) < 3 || !strings.HasPrefix(ce.Args[1], "!") {
-		ce.Reply("Usage: `$cmdprefix emoji-pack upload <telegram shortcode> <room ID> <state key>`")
+		ce.Reply(tc.main.tr("Usage: `$cmdprefix emoji-pack upload <telegram shortcode> <room ID> <state key>`", "Использование: `$cmdprefix emoji-pack upload <короткое имя в Telegram> <ID комнаты> <state key>`"))
 		return
 	}
 	dbl := ce.User.DoublePuppet(ce.Ctx)
 	if dbl == nil {
-		ce.Reply("Double puppeting is required to fetch emoji packs from Matrix")
+		ce.Reply(tc.main.tr("Double puppeting is required to fetch emoji packs from Matrix", "Для получения наборов эмодзи из Matrix требуется включённый double puppeting"))
 		return
 	}
 	mx, ok := dbl.(bridgev2.MatrixAPIWithArbitraryRoomState)
 	if !ok {
-		ce.Reply("Matrix connector does not implement required interface")
+		ce.Reply(tc.main.tr("Matrix connector does not implement required interface", "Коннектор Matrix не поддерживает необходимый интерфейс"))
 		return
 	}
 	tgPackShortcode := ce.Args[0]
@@ -100,27 +100,27 @@ func (tc *TelegramClient) fnUploadEmojiPack(ce *commands.Event) {
 	packStateKey := strings.Join(ce.Args[2:], " ")
 	err := tc.main.Bridge.Bot.EnsureJoined(ce.Ctx, roomID)
 	if err != nil {
-		ce.Reply("Failed to join room: %v", err)
+		ce.Reply(tc.main.tr("Failed to join room: %v", "Не удалось войти в комнату: %v"), err)
 		return
 	}
 	evt, err := mx.GetStateEvent(ce.Ctx, roomID, event.Type{Type: "im.ponies.room_emotes", Class: event.StateEventType}, packStateKey)
 	if err != nil {
-		ce.Reply("Failed to get state event: %v", err)
+		ce.Reply(tc.main.tr("Failed to get state event: %v", "Не удалось получить state-событие: %v"), err)
 		return
 	}
 	pack, ok := evt.Content.Parsed.(*event.ImagePackEventContent)
 	if !ok {
-		ce.Reply("Unexpected parsed content type %T", evt.Content.Parsed)
+		ce.Reply(tc.main.tr("Unexpected parsed content type %T", "Неожиданный тип содержимого: %T"), evt.Content.Parsed)
 		return
 	}
 	evtID := ce.React("\u23f3\ufe0f")
 	defer redactReaction(ce, evtID)
 	link, err := tc.synchronizeEmojiPack(ce.Ctx, ce, pack, tgPackShortcode)
 	if err != nil {
-		ce.Reply("Failed to synchronize emoji pack: %v", err)
+		ce.Reply(tc.main.tr("Failed to synchronize emoji pack: %v", "Не удалось синхронизировать набор эмодзи: %v"), err)
 		return
 	}
-	ce.Reply("Successfully synchronized %s", link)
+	ce.Reply(tc.main.tr("Successfully synchronized %s", "Успешно синхронизировано: %s"), link)
 }
 
 func resizeEmoji(src image.Image, size int) *image.RGBA {
@@ -392,7 +392,7 @@ func (tc *TelegramClient) synchronizeEmojiPack(ctx context.Context, ce *commands
 		existingMXCs.Add(img.URL)
 		item, saveCache, err := tc.synchronizeEmoji(ctx, shortcode, img, isEmojiPack)
 		if err != nil {
-			ce.Reply("Failed to reupload %s: %v", shortcode, err)
+			ce.Reply(tc.main.tr("Failed to reupload %s: %v", "Не удалось перезагрузить %s: %v"), shortcode, err)
 			continue
 		}
 		rawNewSet, err := tc.client.API().StickersAddStickerToSet(ctx, &tg.StickersAddStickerToSetRequest{
@@ -403,7 +403,7 @@ func (tc *TelegramClient) synchronizeEmojiPack(ctx context.Context, ce *commands
 			if tgerr.Is(err, tg.ErrStickerpackStickersTooMuch) || tgerr.Is(err, tg.ErrStickersTooMuch) {
 				return "", err
 			}
-			ce.Reply("Failed to add %s/%d to pack: %v", shortcode, item.Document.(*tg.InputDocument).ID, err)
+			ce.Reply(tc.main.tr("Failed to add %s/%d to pack: %v", "Не удалось добавить %s/%d в набор: %v"), shortcode, item.Document.(*tg.InputDocument).ID, err)
 			continue
 		}
 		err = saveCache(extractNewDocID(rawSet, rawNewSet))
@@ -441,22 +441,22 @@ func redactReaction(ce *commands.Event, evtID id.EventID) {
 
 func (tc *TelegramClient) fnDownloadEmojiPack(ce *commands.Event) {
 	if len(ce.Args) == 0 {
-		ce.Reply("Usage: `$cmdprefix emoji-pack download <pack shortcode or link>`")
+		ce.Reply(tc.main.tr("Usage: `$cmdprefix emoji-pack download <pack shortcode or link>`", "Использование: `$cmdprefix emoji-pack download <короткое имя или ссылка на набор>`"))
 		return
 	}
 	spaceRoom, err := tc.userLogin.GetSpaceRoom(ce.Ctx)
 	if err != nil {
-		ce.Reply("Failed to get space room: %v", err)
+		ce.Reply(tc.main.tr("Failed to get space room: %v", "Не удалось получить комнату пространства (space): %v"), err)
 		return
 	} else if spaceRoom == "" {
-		ce.Reply("Can't bridge image packs if personal filtering spaces are disabled")
+		ce.Reply(tc.main.tr("Can't bridge image packs if personal filtering spaces are disabled", "Нельзя переносить наборы изображений, если отключены персональные пространства (personal filtering spaces)"))
 		return
 	}
 	evtID := ce.React("\u23f3\ufe0f")
 	defer redactReaction(ce, evtID)
 	pack, err := tc.DownloadImagePack(ce.Ctx, ce.Args[0])
 	if err != nil {
-		ce.Reply("Failed to import pack: %v", err)
+		ce.Reply(tc.main.tr("Failed to import pack: %v", "Не удалось импортировать набор: %v"), err)
 		return
 	}
 	if pack.Shortcode == "" && pack.Content.Metadata.BridgedPack != nil {
@@ -467,11 +467,11 @@ func (tc *TelegramClient) fnDownloadEmojiPack(ce *commands.Event) {
 		Raw:    pack.Extra,
 	}, time.Now())
 	if err != nil {
-		ce.Reply("Failed to send image pack to space: %v", err)
+		ce.Reply(tc.main.tr("Failed to send image pack to space: %v", "Не удалось отправить набор изображений в пространство: %v"), err)
 	} else {
 		ce.Reply(
-			"Successfully bridged image pack to %s",
-			format.MarkdownLink("your personal filtering space",
+			tc.main.tr("Successfully bridged image pack to %s", "Набор изображений успешно перенесён в %s"),
+			format.MarkdownLink(tc.main.tr("your personal filtering space", "ваше персональное пространство"),
 				spaceRoom.URI(tc.main.Bridge.Matrix.ServerName()).MatrixToURL()))
 	}
 }

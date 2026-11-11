@@ -1053,7 +1053,7 @@ func (tc *TelegramClient) onUpdateWrapper(ctx context.Context, e tg.Entities, up
 				tc.userLogin.BridgeState.Send(status.BridgeState{
 					StateEvent: status.StateUnknownError,
 					Error:      updateHandlerStuck,
-					Message:    "Processing messages from Telegram is stuck",
+					Message:    tc.main.tr("Processing messages from Telegram is stuck", "Обработка сообщений из Telegram зависла"),
 				})
 			}
 		case err := <-doneChan:
