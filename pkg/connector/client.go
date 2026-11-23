@@ -95,6 +95,13 @@ type TelegramClient struct {
 	clientInitialized *exsync.Event
 	mu                sync.Mutex
 
+	// parentCtx is the long-lived context the client was started with. It is
+	// kept around so the watchdog can restart the client without relying on
+	// the context of the connection it is trying to replace.
+	parentCtx   context.Context
+	lastRestart time.Time
+	restartMu   sync.Mutex
+
 	appConfigLock sync.Mutex
 	appConfig     map[string]any
 	appConfigHash int
@@ -544,17 +551,74 @@ func (tc *TelegramClient) Connect(ctx context.Context) {
 
 	// Add a cancellation layer we can use for explicit Disconnect
 
+	tc.parentCtx = ctx
 	ctx, cancel := context.WithCancel(ctx)
 	tc.clientCtx = ctx
 	tc.clientCancel = cancel
 	tc.clientDone.Clear()
 	tc.clientInitialized.Clear()
 	go tc.runInBackground(ctx)
+	go tc.runWatchdog(ctx)
 }
 
+// restartBackoff returns the delay before the next client restart attempt.
+// It grows linearly up to two minutes, so a persistently broken session does
+// not turn into a reconnect hot loop.
+func restartBackoff(attempt int) time.Duration {
+	delay := time.Duration(attempt) * 10 * time.Second
+	if delay > 2*time.Minute {
+		delay = 2 * time.Minute
+	}
+	if delay < 5*time.Second {
+		delay = 5 * time.Second
+	}
+	return delay
+}
+
+// runInBackground runs the gotd client until the client context is canceled.
+// Client.Run() reconnects on its own, but it returns as soon as the update
+// manager exits, and upstream code never restarts it: a single unexpected
+// return used to leave the login silently dead until a manual restart. Wrap it
+// into a supervised loop so an unexpected exit always leads to a new session
+// using the auth key that is already stored in the database.
 func (tc *TelegramClient) runInBackground(ctx context.Context) {
 	log := zerolog.Ctx(ctx)
-	err := tc.client.Run(ctx, func(ctx context.Context) error {
+	for attempt := 1; ; attempt++ {
+		startedAt := time.Now()
+		err := tc.runClientOnce(ctx)
+		tc.clientDone.Set()
+		tc.clientInitialized.Set()
+		if ctx.Err() != nil {
+			log.Debug().AnErr("ctx_err", ctx.Err()).Msg("Client exited without error")
+			return
+		}
+		if auth.IsUnauthorized(err) || errors.Is(err, ErrNoAuthKey) {
+			log.Err(err).Msg("Client exited with a permanent error, not reconnecting")
+			tc.sendBadCredentialsOrUnknownError(err)
+			return
+		}
+		if time.Since(startedAt) > 5*time.Minute {
+			attempt = 1
+		}
+		delay := restartBackoff(attempt)
+		log.Warn().Err(err).Dur("retry_in", delay).Msg("Client exited, restarting")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
+}
+
+func (tc *TelegramClient) runClientOnce(ctx context.Context) (err error) {
+	log := zerolog.Ctx(ctx)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Err(fmt.Errorf("panic: %v", recovered)).Msg("Client panicked, restarting")
+			err = fmt.Errorf("client panicked: %v", recovered)
+		}
+	}()
+	return tc.client.Run(ctx, func(ctx context.Context) error {
 		tc.clientInitialized.Set()
 		if tc.reactionCapsStale.CompareAndSwap(true, false) {
 			go tc.resendCapabilities(ctx)
@@ -579,17 +643,102 @@ func (tc *TelegramClient) runInBackground(ctx context.Context) {
 		}
 		return err
 	})
-	tc.clientDone.Set()
-	tc.clientInitialized.Set()
-	if err != nil {
-		log.Err(err).AnErr("ctx_err", ctx.Err()).Msg("Client exited with error")
-		tc.sendBadCredentialsOrUnknownError(err)
-	} else if ctx.Err() == nil {
-		log.Warn().Msg("Client exited unexpectedly")
-		tc.sendBadCredentialsOrUnknownError(fmt.Errorf("unexpectedly disconnected from Telegram"))
-	} else {
-		log.Debug().AnErr("ctx_err", ctx.Err()).Msg("Client exited without error")
+}
+
+const (
+	// watchdogInterval is how often the client health is checked.
+	watchdogInterval = 2 * time.Minute
+	// watchdogRPCTimeout bounds the heartbeat RPC so a blackholed connection
+	// cannot block the check itself.
+	watchdogRPCTimeout = 25 * time.Second
+	// watchdogMaxStalls is the number of consecutive checks that must show no
+	// progress before the client is restarted (5 * 2min = 10min of silence).
+	watchdogMaxStalls = 5
+	// watchdogMinRestartGap prevents a restart loop when Telegram is flaky.
+	watchdogMinRestartGap = 10 * time.Minute
+)
+
+// runWatchdog detects a wedged client and restarts it.
+//
+// The failure mode this exists for: Telegrams update state (pts) on the server
+// keeps advancing, but the bridge stops consuming updates while Client.Run()
+// is still alive and reports itself connected. gotd only reconnects its socket,
+// it never notices that its update manager is stuck, so without this check the
+// login stays dead until the process is restarted by hand.
+func (tc *TelegramClient) runWatchdog(ctx context.Context) {
+	log := tc.userLogin.Log
+	stalls := 0
+	ticker := time.NewTicker(watchdogInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if !tc.clientInitialized.IsSet() || tc.clientDone.IsSet() {
+			stalls = 0
+			continue
+		}
+
+		rctx, cancel := context.WithTimeout(ctx, watchdogRPCTimeout)
+		remote, remoteErr := tc.client.API().UpdatesGetState(rctx)
+		var (
+			local      updates.State
+			localFound bool
+			localErr   error
+		)
+		if remoteErr == nil {
+			local, localFound, localErr = tc.ScopedStore.GetState(rctx, tc.telegramUserID)
+		}
+		cancel()
+
+		switch {
+		case remoteErr != nil:
+			stalls++
+			log.Debug().Err(remoteErr).Int("stalls", stalls).Msg("Watchdog heartbeat failed")
+		case localErr != nil:
+			stalls = 0
+			log.Debug().Err(localErr).Msg("Watchdog failed to read local update state")
+		case !localFound:
+			stalls = 0
+		case remote.Pts > local.Pts:
+			stalls++
+			log.Debug().
+				Int("remote_pts", remote.Pts).
+				Int("local_pts", local.Pts).
+				Int("stalls", stalls).
+				Msg("Watchdog sees unprocessed Telegram updates")
+		default:
+			stalls = 0
+		}
+
+		if stalls >= watchdogMaxStalls {
+			stalls = 0
+			tc.forceClientRestart(fmt.Sprintf("no update progress for %s", time.Duration(watchdogMaxStalls)*watchdogInterval))
+		}
 	}
+}
+
+// forceClientRestart tears the current session down and starts a new one using
+// the auth key stored in the database. No user interaction is needed.
+func (tc *TelegramClient) forceClientRestart(reason string) {
+	tc.restartMu.Lock()
+	defer tc.restartMu.Unlock()
+	if time.Since(tc.lastRestart) < watchdogMinRestartGap {
+		return
+	}
+	if tc.parentCtx == nil || tc.parentCtx.Err() != nil {
+		tc.userLogin.Log.Warn().Msg("Watchdog wants to restart the client, but the bridge context is gone")
+		return
+	}
+	tc.lastRestart = time.Now()
+	parentCtx := tc.parentCtx
+	tc.userLogin.Log.Warn().Str("reason", reason).Msg("Watchdog: Telegram updates are stuck, restarting client")
+	go func() {
+		tc.Disconnect()
+		tc.Connect(parentCtx)
+	}()
 }
 
 func (tc *TelegramClient) Disconnect() {
