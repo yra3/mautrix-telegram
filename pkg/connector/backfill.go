@@ -113,15 +113,6 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	log := zerolog.Ctx(ctx).With().Str("method", "FetchMessages").Logger()
 	ctx = log.WithContext(ctx)
 
-	// A portal created moments ago is about to receive its initial backfill. Mute it
-	// first so those messages don't notify anyone; the real Telegram notification
-	// settings are applied once the backfill has been sent (see restorePortalMute).
-	backfillPortal := fetchParams.Portal
-	mutedForBackfill := false
-	if shouldMuteForBackfill(fetchParams.Forward, fetchParams.AnchorMessage != nil, backfillPortal.MXID, tc.main.Config.MuteNewPortalsUntilBackfill) {
-		mutedForBackfill = tc.mutePortalForBackfill(ctx, backfillPortal)
-	}
-
 	var takeoutID int64
 	var err error
 	if (tc.main.Config.Takeout.ForwardBackfill && fetchParams.Forward) || (tc.main.Config.Takeout.BackwardBackfill && !fetchParams.Forward) {
@@ -168,6 +159,14 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	}
 	if topicID == ids.TopicIDSpaceRoom {
 		return nil, nil
+	}
+	// A portal created moments ago is about to receive its initial backfill. Mute it
+	// first so those messages don't notify anyone; the real Telegram notification
+	// settings are applied once the backfill has been sent (see restorePortalMute).
+	backfillPortal := fetchParams.Portal
+	mutedForBackfill := false
+	if shouldMuteForBackfill(fetchParams.Forward, fetchParams.AnchorMessage != nil, backfillPortal.MXID, tc.main.Config.MuteNewPortalsUntilBackfill) {
+		mutedForBackfill = tc.mutePortalForBackfill(ctx, backfillPortal)
 	}
 	limit := fetchParams.Count
 	const chunkLimit = 100
