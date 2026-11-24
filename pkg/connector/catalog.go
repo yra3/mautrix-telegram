@@ -43,6 +43,9 @@ type catalogSnapshot struct {
 	Participants int
 	IsForum      bool
 	IsBroadcast  bool
+	// AboutKnown marks a snapshot that came from a full-chat response, so an
+	// empty About means "this chat has no description", not "not fetched yet".
+	AboutKnown bool
 }
 
 func catalogKindForChat(chat tg.ChatClass) string {
@@ -109,7 +112,7 @@ func (tc *TelegramClient) recordCatalog(ctx context.Context, portalID networkid.
 	if snap.Kind != "" {
 		patch.Kind = &snap.Kind
 	}
-	if snap.About != "" {
+	if snap.AboutKnown || snap.About != "" {
 		patch.About = &snap.About
 		patch.AboutFetched = true
 	}
@@ -252,6 +255,31 @@ func (tc *TelegramClient) fetchCatalogAboutAsync(ctx context.Context, portalID n
 	}()
 }
 
+// fetchCatalogSnapshotAsync fills a catalog row that the panel shows but that
+// has no snapshot yet (the rejection happened before the catalog knew the chat).
+// It also loads about, so one call per row is enough.
+func (tc *TelegramClient) fetchCatalogSnapshotAsync(ctx context.Context, portalID networkid.PortalID) {
+	if portalID == "" {
+		return
+	}
+	if _, loaded := pendingAboutFetches.LoadOrStore(string(portalID), struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer pendingAboutFetches.Delete(string(portalID))
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		snap, err := tc.fetchChatSnapshot(fetchCtx, portalID)
+		if err != nil || snap.Kind == "" {
+			zerolog.Ctx(fetchCtx).Debug().Err(err).
+				Str("portal_id", string(portalID)).
+				Msg("Failed to fetch chat snapshot")
+			return
+		}
+		tc.recordCatalog(fetchCtx, portalID, snap, nil)
+	}()
+}
+
 // fetchChatSnapshot fetches chat metadata with a single API call. It is used
 // when a chat is added manually and is not in the catalog yet.
 func (tc *TelegramClient) fetchChatSnapshot(ctx context.Context, portalID networkid.PortalID) (catalogSnapshot, error) {
@@ -302,5 +330,6 @@ func snapshotFromFullChat(fullChat *tg.MessagesChatFull) catalogSnapshot {
 		}
 	}
 	snap.About = strings.TrimSpace(fullChat.FullChat.GetAbout())
+	snap.AboutKnown = true
 	return snap
 }

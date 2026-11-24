@@ -105,6 +105,10 @@ func (tc *TelegramClient) panelRows(ctx context.Context, state *store.PanelState
 			Kind:         row.Kind,
 			RoomID:       string(tc.portalMXID(ctx, row.ID)),
 		}
+		if row.Title == "" {
+			// The rejection was recorded before the catalog knew this chat.
+			tc.fetchCatalogSnapshotAsync(ctx, networkid.PortalID(row.ID))
+		}
 	}
 	return out, total, nil
 }
@@ -126,8 +130,10 @@ func (tc *TelegramClient) panelRowFromCatalog(ctx context.Context, row *store.Ch
 		out.LastSeenTS = rejection.LastSeenTS
 	}
 	out.HasMXID = out.RoomID != ""
-	if row.AboutFetchedTS == 0 && out.Rejected {
-		// Lazy about loading: only for rows the user actually sees.
+	// Lazy metadata loading: only for rows the user actually sees.
+	if row.Title == "" || row.MetaFetchedTS == 0 {
+		tc.fetchCatalogSnapshotAsync(ctx, networkid.PortalID(row.PortalID))
+	} else if row.AboutFetchedTS == 0 {
 		tc.fetchCatalogAboutAsync(ctx, networkid.PortalID(row.PortalID))
 	}
 	return out
