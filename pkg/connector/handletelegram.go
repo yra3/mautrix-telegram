@@ -169,6 +169,9 @@ func (tc *TelegramClient) onUpdateChannel(ctx context.Context, e tg.Entities, up
 		log.Debug().Msg("Update was for a left channel. Leaving the channel.")
 		return tc.selfLeaveChat(ctx, portalKey, fmt.Errorf("channel has left=true after UpdateChannel"))
 	}
+	if channel != nil {
+		tc.updateCatalogFromEntity(ctx, portalKey.ID, channel)
+	}
 	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
 		EventMeta: simplevent.EventMeta{
 			Type:         bridgev2.RemoteEventChatResync,
@@ -273,10 +276,17 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 			portalKey := tc.makePortalKeyFromPeer(msgPeer, 0)
 			portal, _ := tc.main.Bridge.GetExistingPortalByKey(ctx, portalKey)
 			if portal == nil || portal.MXID == "" {
-				log.Debug().
-					Stringer("peer_id", msgPeer).
-					Str("reason", reason).
-					Msg("Ignoring message for rejected peer (12h TTL)")
+				if tc.isRejectedLogAllowed(basePortalID) {
+					log.Info().
+						Stringer("peer_id", msgPeer).
+						Str("reason", reason).
+						Msg("Ignoring message for rejected peer")
+				} else {
+					log.Debug().
+						Stringer("peer_id", msgPeer).
+						Str("reason", reason).
+						Msg("Ignoring message for rejected peer")
+				}
 				return nil
 			}
 		}
@@ -1746,7 +1756,20 @@ func (tc *TelegramClient) onPeerBlocked(ctx context.Context, e tg.Entities, upda
 }
 
 func (tc *TelegramClient) onChat(ctx context.Context, e tg.Entities, update *tg.UpdateChat) error {
+	if chat, ok := e.Chats[update.ChatID]; ok {
+		tc.updateCatalogFromEntity(ctx, portalIDForChatEntity(chat), chat)
+	}
 	return nil
+}
+
+func portalIDForChatEntity(entity tg.ChatClass) networkid.PortalID {
+	switch typed := entity.(type) {
+	case *tg.Chat:
+		return ids.MakePortalID(ids.PeerTypeChat, typed.ID)
+	case *tg.Channel:
+		return ids.MakePortalID(ids.PeerTypeChannel, typed.ID)
+	}
+	return ""
 }
 
 func (tc *TelegramClient) onPhoneCall(ctx context.Context, e tg.Entities, update *tg.UpdatePhoneCall) error {

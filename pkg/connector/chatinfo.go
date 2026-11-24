@@ -610,7 +610,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 				if err == nil {
 					if u, ok := user.(*tg.User); ok && u.GetBot() {
 						err := fmt.Errorf("bot %d chat bridging is disabled", id)
-						tc.RejectPeer(basePortalID, err.Error())
+						tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 						return nil, err
 					}
 				}
@@ -624,7 +624,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 					if errFull == nil && fullUser != nil {
 						if folderID, ok := fullUser.FullUser.GetFolderID(); ok && folderID != 0 {
 							err := fmt.Errorf("user %d is in archive (folder %d)", id, folderID)
-							tc.RejectPeer(basePortalID, err.Error())
+							tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 							return nil, err
 						}
 					}
@@ -643,7 +643,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 			if cf, ok := fullChat.FullChat.(*tg.ChatFull); ok {
 				if folderID, ok := cf.GetFolderID(); ok && folderID != 0 {
 					err := fmt.Errorf("chat %d is in archive (folder %d)", id, folderID)
-					tc.RejectPeer(basePortalID, err.Error())
+					tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 					return nil, err
 				}
 			}
@@ -651,7 +651,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 		info, _, err := tc.wrapFullChatInfo(portal.ID, fullChat)
 		if err != nil {
 			if portal.MXID == "" {
-				tc.RejectPeer(basePortalID, err.Error())
+				tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 			}
 			return nil, err
 		}
@@ -677,7 +677,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 			}
 			if channel != nil && channel.ParticipantsCount > 0 && !tc.main.Config.ShouldBridge(channel.ParticipantsCount) {
 				err := fmt.Errorf("too many participants (%d) in forum %d", channel.ParticipantsCount, id)
-				tc.RejectPeer(basePortalID, err.Error())
+				tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 				return nil, err
 			}
 			if channel != nil && channel.Forum && tc.main.Config.MaxMemberCount > 0 && channel.ParticipantsCount == 0 {
@@ -692,13 +692,13 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 					if portal.MXID == "" && !tc.main.Config.BridgeArchived {
 						if folderID, ok := cf.GetFolderID(); ok && folderID != 0 {
 							err := fmt.Errorf("forum %d is in archive (folder %d)", id, folderID)
-							tc.RejectPeer(basePortalID, err.Error())
+							tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 							return nil, err
 						}
 					}
 					if !tc.main.Config.ShouldBridge(cf.ParticipantsCount) {
 						err := fmt.Errorf("too many participants (%d) in forum %d", cf.ParticipantsCount, id)
-						tc.RejectPeer(basePortalID, err.Error())
+						tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 						return nil, err
 					}
 					channel.ParticipantsCount = cf.ParticipantsCount
@@ -707,7 +707,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 			info, mfm, err := tc.wrapChatInfo(portal.ID, channel)
 			if err != nil {
 				if portal.MXID == "" {
-					tc.RejectPeer(basePortalID, err.Error())
+					tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 				}
 				return nil, err
 			}
@@ -728,7 +728,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 			if cf, ok := fullChat.FullChat.(*tg.ChannelFull); ok {
 				if folderID, ok := cf.GetFolderID(); ok && folderID != 0 {
 					err := fmt.Errorf("channel %d is in archive (folder %d)", id, folderID)
-					tc.RejectPeer(basePortalID, err.Error())
+					tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 					return nil, err
 				}
 			}
@@ -736,7 +736,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 		info, mfm, err := tc.wrapFullChatInfo(portal.ID, fullChat)
 		if err != nil {
 			if portal.MXID == "" {
-				tc.RejectPeer(basePortalID, err.Error())
+				tc.rejectPeer(ctx, basePortalID, err.Error(), portal.MXID != "")
 			}
 			return nil, err
 		}

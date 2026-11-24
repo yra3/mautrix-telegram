@@ -146,6 +146,8 @@ type TelegramClient struct {
 
 	rejectedPeersLock sync.RWMutex
 	rejectedPeers     map[networkid.PortalID]rejectionInfo
+	rejectedLogLock   sync.Mutex
+	rejectedLogTS     map[networkid.PortalID]time.Time
 
 	backfillMuteLock sync.Mutex
 }
@@ -153,6 +155,8 @@ type TelegramClient struct {
 type rejectionInfo struct {
 	reason string
 	expiry time.Time
+	// manual rejections are stored in the database and never expire.
+	manual bool
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)
@@ -212,6 +216,7 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 		stickerPacksByID:   map[int64]*stickerPackCache{},
 
 		rejectedPeers:      make(map[networkid.PortalID]rejectionInfo),
+		rejectedLogTS:      make(map[networkid.PortalID]time.Time),
 		recentMessageRooms: exsync.NewRingBuffer[networkid.MessageID, networkid.PortalKey](32),
 		chatMigrateSender:  exsync.NewMap[int64, bridgev2.EventSender](),
 
@@ -622,6 +627,7 @@ func (tc *TelegramClient) runClientOnce(ctx context.Context) (err error) {
 	}()
 	return tc.client.Run(ctx, func(ctx context.Context) error {
 		tc.clientInitialized.Set()
+		tc.restoreManualRejections(ctx)
 		if tc.reactionCapsStale.CompareAndSwap(true, false) {
 			go tc.resendCapabilities(ctx)
 		}
@@ -845,15 +851,29 @@ func (tc *TelegramClient) FillBridgeState(state status.BridgeState) status.Bridg
 const rejectionTTL = 12 * time.Hour
 
 func (tc *TelegramClient) RejectPeer(portalID networkid.PortalID, reason string) {
+	tc.rejectPeerCache(portalID, reason, false)
+}
+
+// RejectPeerManual caches a rejection that never expires and must be restored
+// from the database after a restart.
+func (tc *TelegramClient) RejectPeerManual(portalID networkid.PortalID, reason string) {
+	tc.rejectPeerCache(portalID, reason, true)
+}
+
+func (tc *TelegramClient) rejectPeerCache(portalID networkid.PortalID, reason string, manual bool) {
 	if portalID == "" {
 		return
 	}
 	tc.rejectedPeersLock.Lock()
 	defer tc.rejectedPeersLock.Unlock()
-	tc.rejectedPeers[portalID] = rejectionInfo{
+	info := rejectionInfo{
 		reason: reason,
-		expiry: time.Now().Add(rejectionTTL),
+		manual: manual,
 	}
+	if !manual {
+		info.expiry = time.Now().Add(rejectionTTL)
+	}
+	tc.rejectedPeers[portalID] = info
 }
 
 func (tc *TelegramClient) UnrejectPeer(portalID networkid.PortalID) {
@@ -875,7 +895,7 @@ func (tc *TelegramClient) GetPeerRejection(portalID networkid.PortalID) (string,
 	if !ok {
 		return "", false
 	}
-	if time.Now().After(info.expiry) {
+	if !info.manual && time.Now().After(info.expiry) {
 		return "", false
 	}
 	return info.reason, true
