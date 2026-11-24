@@ -17,7 +17,9 @@
 package main
 
 import (
+	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/bridgev2/matrix/mxmain"
+	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-telegram/pkg/connector"
 )
@@ -52,6 +54,11 @@ func main() {
 		}
 		if c.Config.DeviceInfo.DeviceModel == "auto" || c.Config.DeviceInfo.DeviceModel == "" {
 			c.Config.DeviceInfo.DeviceModel = "mautrix-telegram"
+		}
+		if c.Bridge != nil && c.Bridge.Matrix != nil {
+			if mc, ok := c.Bridge.Matrix.(*matrix.Connector); ok && mc.EventProcessor != nil {
+				mc.EventProcessor.PrependHandler(event.EventReaction, c.HandlePanelReaction)
+			}
 		}
 	}
 	m.InitVersion(Tag, Commit, BuildTime)

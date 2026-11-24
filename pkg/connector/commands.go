@@ -34,7 +34,7 @@ import (
 )
 
 func (tc *TelegramConnector) buildCommands() []commands.CommandHandler {
-	return []commands.CommandHandler{
+	handlers := []commands.CommandHandler{
 		&commands.FullHandler{
 			Func: fnSyncChats,
 			Name: "sync-chats",
@@ -76,6 +76,7 @@ func (tc *TelegramConnector) buildCommands() []commands.CommandHandler {
 			RequiresLogin: true,
 		},
 	}
+	return append(handlers, tc.declinedCommandHandlers()...)
 }
 
 func fnSyncChats(ce *commands.Event) {
