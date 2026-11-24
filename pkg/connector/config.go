@@ -215,6 +215,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Str, "displayname_template")
 	helper.Copy(up.Bool, "bridge_bots")
 	helper.Copy(up.Bool, "bridge_archived")
+	helper.Copy(up.Bool, "mute_new_portals_until_backfill")
 }
 
 func (tc *TelegramConnector) GetConfig() (example string, data any, upgrader up.Upgrader) {
