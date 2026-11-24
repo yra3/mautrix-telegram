@@ -37,8 +37,10 @@ const (
 	KeySort    = "🔀"
 )
 
-// RowEmojis are the per-row buttons, one per visible row.
-var RowEmojis = []string{"1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"}
+// RowEmojis are the per-row buttons, one per visible row. Circled digits are
+// single codepoints: keycap sequences (1️⃣) render as empty boxes in
+// clients whose font has no keycap glyph, e.g. Lightning.
+var RowEmojis = []string{"①", "②", "③", "④", "⑤"}
 
 // Row is one line of the panel.
 type Row struct {
@@ -87,9 +89,22 @@ type Action struct {
 	Row int
 }
 
-// NormalizeKey strips variation selectors so "1️⃣" and "1⃣" compare equal.
+// circledDigits maps the row buttons to plain digits.
+var circledDigits = map[string]string{
+	"①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5",
+	"⑥": "6", "⑦": "7", "⑧": "8", "⑨": "9",
+}
+
+// NormalizeKey folds every way a row button can arrive into a plain digit:
+// keycap sequences ("1️⃣" from older panels, "1⃣" from clients that drop
+// the variation selector), circled digits, and bare digits.
 func NormalizeKey(raw string) string {
-	return strings.ReplaceAll(strings.TrimSpace(raw), "\ufe0f", "")
+	key := strings.ReplaceAll(strings.TrimSpace(raw), "\ufe0f", "")
+	key = strings.ReplaceAll(key, "\u20e3", "")
+	if digit, ok := circledDigits[key]; ok {
+		return digit
+	}
+	return key
 }
 
 // ParseKey maps a reaction key to an action.
@@ -246,11 +261,19 @@ func Render(p Page) string {
 
 	b.WriteString("\n")
 	if ru {
-		b.WriteString("⬅️/➡️ — страницы · 1️⃣–5️⃣ — действие со строкой\n")
-		b.WriteString("🔍 поиск: `!s <запрос>` · 🔄 обновить · 🔀 сортировка")
+		b.WriteString("⬅️/➡️ — страницы · ①–⑤ — действие со строкой\n")
+		if p.Query != "" {
+			b.WriteString("🔍 сбросить фильтр · 🔄 обновить · 🔀 сортировка")
+		} else {
+			b.WriteString("🔍 поиск: `!s <запрос>` · 🔄 обновить · 🔀 сортировка")
+		}
 	} else {
-		b.WriteString("⬅️/➡️ — pages · 1️⃣–5️⃣ — act on a row\n")
-		b.WriteString("🔍 search: `!s <query>` · 🔄 refresh · 🔀 sort")
+		b.WriteString("⬅️/➡️ — pages · ①–⑤ — act on a row\n")
+		if p.Query != "" {
+			b.WriteString("🔍 clear the filter · 🔄 refresh · 🔀 sort")
+		} else {
+			b.WriteString("🔍 search: `!s <query>` · 🔄 refresh · 🔀 sort")
+		}
 	}
 	return b.String()
 }

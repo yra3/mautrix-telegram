@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -151,10 +152,17 @@ func (tc *TelegramClient) portalMXID(ctx context.Context, portalID string) id.Ro
 	return portal.MXID
 }
 
-func (tc *TelegramClient) renderPanel(ctx context.Context, user *bridgev2.User, state *store.PanelState, status string) (string, int, error) {
+func (tc *TelegramClient) renderPanel(ctx context.Context, user *bridgev2.User, state *store.PanelState, status string) (string, int, bool, error) {
 	rows, total, err := tc.panelRows(ctx, state)
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
+	}
+	needFill := false
+	for _, row := range rows {
+		if row.Title == "" {
+			needFill = true
+			break
+		}
 	}
 	state.Page = panel.ClampPage(state.Page, total)
 	page := panel.Page{
@@ -168,13 +176,13 @@ func (tc *TelegramClient) renderPanel(ctx context.Context, user *bridgev2.User, 
 		Status:    status,
 		Lang:      tc.main.panelLang(),
 	}
-	return panel.Render(page), len(rows), nil
+	return panel.Render(page), len(rows), needFill, nil
 }
 
 // drawPanel creates or edits the single live panel message and re-seeds the
 // reaction buttons.
 func (tc *TelegramClient) drawPanel(ctx context.Context, user *bridgev2.User, state *store.PanelState, status string) error {
-	md, rowCount, err := tc.renderPanel(ctx, user, state, status)
+	md, rowCount, needFill, err := tc.renderPanel(ctx, user, state, status)
 	if err != nil {
 		return err
 	}
@@ -201,6 +209,11 @@ func (tc *TelegramClient) drawPanel(ctx context.Context, user *bridgev2.User, st
 		return fmt.Errorf("failed to save panel state: %w", err)
 	}
 	tc.syncPanelReactions(ctx, state.RoomID, state.EventID, rowCount)
+	if needFill {
+		// Titles are loaded lazily, one API call per missing row. Redraw once when
+		// they have landed so the panel fills in without a manual refresh.
+		tc.main.schedulePanelTitleRefresh(user.MXID, state.EventID)
+	}
 	return nil
 }
 
@@ -389,7 +402,13 @@ func (tc *TelegramClient) applyPanelAction(
 	case panel.ActionRefresh:
 		state.Page = panel.ClampPage(state.Page, tc.panelTotal(ctx, state))
 	case panel.ActionSearch:
-		status = tc.main.trf("Search: send `!s <query>`", "Поиск: отправь `!s <запрос>`")
+		if state.FilterQuery != "" {
+			state.FilterQuery = ""
+			state.Page = 0
+			status = tc.main.tr("Filter cleared: showing declined chats", "Фильтр сброшен: показаны отклонённые чаты")
+		} else {
+			status = tc.main.trf("Search: send `!s <query>`", "Поиск: отправь `!s <запрос>`")
+		}
 	case panel.ActionRow:
 		status = tc.applyRowAction(ctx, user, state, action.Row)
 	}
@@ -441,20 +460,26 @@ func (tc *TelegramClient) applyRowAction(
 				zerolog.Ctx(ctx).Err(err).Str("room_id", string(row.RoomID)).Msg("Failed to archive room")
 				return tc.main.trf("Failed to archive «%s»: %v", "Не удалось архивировать «%s»: %v", title, err)
 			}
-			return tc.main.trf("🗄 «%s» archived in Matrix", "🗄 «%s» убран в архив Matrix", title)
+			return tc.main.trf("🗄 «%s» moved to the Matrix archive", "🗄 «%s» убран в архив Matrix", title)
 		}
 		if err = tc.clearPeerRejection(ctx, portalID); err != nil {
 			zerolog.Ctx(ctx).Err(err).Str("portal_id", string(portalID)).Msg("Failed to clear rejection")
 			return tc.main.trf("Failed to un-decline «%s»: %v", "Не удалось снять отклонение «%s»: %v", title, err)
 		}
-		return tc.main.trf("✅ «%s» is no longer declined", "✅ «%s» больше не отклонён", title)
+		return tc.main.trf(
+			"✅ «%s» is unblocked, the room is created on the next message",
+			"✅ «%s» разблокирован — комната появится при следующем сообщении", title,
+		)
 	}
 	reason := tc.main.tr("declined manually", "отклонён вручную")
 	if err = tc.rejectPeerManually(ctx, portalID, reason, row.HasMXID); err != nil {
 		zerolog.Ctx(ctx).Err(err).Str("portal_id", string(portalID)).Msg("Failed to decline chat")
 		return tc.main.trf("Failed to decline «%s»: %v", "Не удалось отклонить «%s»: %v", title, err)
 	}
-	return tc.main.trf("⛔ «%s» is now declined", "⛔ «%s» теперь отклонён", title)
+	return tc.main.trf(
+		"⛔ «%s» is declined, new messages will not reach Matrix",
+		"⛔ «%s» отклонён — новые сообщения в Matrix не попадут", title,
+	)
 }
 
 // selectAbsoluteRow handles the digit shortcut: the number is the position in
@@ -472,6 +497,44 @@ func (tc *TelegramClient) selectAbsoluteRow(ctx context.Context, user *bridgev2.
 	status := tc.applyRowAction(ctx, user, state, index%panel.PageSize)
 	if err = tc.drawPanel(ctx, user, state, status); err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to redraw declined panel after digit selection")
+	}
+}
+
+// panelTitleRefreshes deduplicates the automatic redraw per panel event.
+var panelTitleRefreshes sync.Map
+
+// schedulePanelTitleRefresh redraws the panel once, shortly after a render that
+// had rows without titles, so lazily fetched names show up without a manual
+// refresh. It is keyed by the panel event, so every new panel gets one redraw.
+func (tc *TelegramConnector) schedulePanelTitleRefresh(userMXID id.UserID, eventID id.EventID) {
+	if _, loaded := panelTitleRefreshes.LoadOrStore(eventID, struct{}{}); loaded {
+		return
+	}
+	time.AfterFunc(7*time.Second, func() {
+		panelTitleRefreshes.Delete(eventID)
+		tc.redrawPanelIfCurrent(context.Background(), userMXID, eventID)
+	})
+}
+
+func (tc *TelegramConnector) redrawPanelIfCurrent(ctx context.Context, userMXID id.UserID, eventID id.EventID) {
+	state, err := tc.Store.PanelState.Get(ctx, userMXID)
+	if err != nil || state.EventID != eventID {
+		return
+	}
+	user, err := tc.Bridge.GetUserByMXID(ctx, userMXID)
+	if err != nil || user == nil {
+		return
+	}
+	login := user.GetDefaultLogin()
+	if login == nil {
+		return
+	}
+	client, ok := login.Client.(*TelegramClient)
+	if !ok || client == nil {
+		return
+	}
+	if err = client.drawPanel(ctx, user, state, ""); err != nil {
+		zerolog.Ctx(ctx).Debug().Err(err).Msg("Failed to refresh the declined panel after loading titles")
 	}
 }
 
