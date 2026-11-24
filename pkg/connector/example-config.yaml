@@ -115,6 +115,11 @@ contact_names: false
 ignore_contact_names: false
 # Language for bridge bot messages and command descriptions (en or ru).
 language: en
+# Should newly created portals be muted in Matrix until the initial backfill has
+# finished? The Telegram notification settings of the chat are applied to the
+# room as soon as the backfill messages have all been sent, so rooms that are
+# unmuted on Telegram get their sound back and muted chats stay muted.
+mute_new_portals_until_backfill: false
 # Should the bridge send all unicode reactions as custom emoji reactions to
 # Telegram? By default, the bridge only uses custom emojis for unicode emojis
 # that aren't allowed in reactions.

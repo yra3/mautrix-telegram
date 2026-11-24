@@ -146,6 +146,8 @@ type TelegramClient struct {
 
 	rejectedPeersLock sync.RWMutex
 	rejectedPeers     map[networkid.PortalID]rejectionInfo
+
+	backfillMuteLock sync.Mutex
 }
 
 type rejectionInfo struct {
@@ -622,6 +624,11 @@ func (tc *TelegramClient) runClientOnce(ctx context.Context) (err error) {
 		tc.clientInitialized.Set()
 		if tc.reactionCapsStale.CompareAndSwap(true, false) {
 			go tc.resendCapabilities(ctx)
+		}
+		// Portals that were still muted for a backfill when the bridge stopped would
+		// never get their notification settings restored, so do it on startup.
+		if tc.main.Config.MuteNewPortalsUntilBackfill {
+			go tc.restoreStaleBackfillMutes(log.WithContext(tc.clientCtx))
 		}
 		// If takeout dialog sync is enabled, we assume it'll resume from a getTakeoutID call.
 		// If not, resume dialog sync manually here.

@@ -64,6 +64,10 @@ type PortalMetadata struct {
 	LastSync          jsontime.Unix `json:"last_sync,omitempty"`
 	FullSynced        bool          `json:"full_synced,omitempty"`
 	ParticipantsCount int           `json:"member_count,omitempty"`
+	// MutedForBackfill is set while the portal is muted only because the initial
+	// backfill hasn't finished yet. It is cleared once the real Telegram
+	// notification settings have been applied to the room.
+	MutedForBackfill jsontime.Unix `json:"muted_for_backfill,omitempty"`
 
 	SponsoredMessagePollTS    jsontime.Unix       `json:"sponsored_message_poll_ts,omitempty"`
 	SponsoredMessageEventID   id.EventID          `json:"sponsored_message_event_id,omitempty"`

@@ -107,6 +107,7 @@ type TelegramConfig struct {
 	DisplaynameTemplate                  string              `yaml:"displayname_template"`
 	BridgeBots                           bool                `yaml:"bridge_bots"`
 	BridgeArchived                       bool                `yaml:"bridge_archived"`
+	MuteNewPortalsUntilBackfill          bool                `yaml:"mute_new_portals_until_backfill"`
 	displaynameTemplate                  *template.Template  `yaml:"-"`
 }
 
