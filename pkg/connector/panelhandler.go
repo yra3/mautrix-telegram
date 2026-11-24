@@ -443,6 +443,15 @@ func (tc *TelegramClient) applyRowAction(
 	if title == "" {
 		title = row.PortalID
 	}
+	rowNumber := state.Page*panel.PageSize + rowIndex + 1
+	zerolog.Ctx(ctx).Info().
+		Int("page", state.Page).
+		Int("row_index", rowIndex).
+		Int("row_number", rowNumber).
+		Str("portal_id", string(portalID)).
+		Str("title", title).
+		Bool("rejected", row.Rejected).
+		Msg("Panel row action")
 	if row.Rejected {
 		if row.RoomID != "" || row.HasMXID {
 			doublePuppet := user.DoublePuppet(ctx)
@@ -460,15 +469,15 @@ func (tc *TelegramClient) applyRowAction(
 				zerolog.Ctx(ctx).Err(err).Str("room_id", string(row.RoomID)).Msg("Failed to archive room")
 				return tc.main.trf("Failed to archive «%s»: %v", "Не удалось архивировать «%s»: %v", title, err)
 			}
-			return tc.main.trf("🗄 «%s» moved to the Matrix archive", "🗄 «%s» убран в архив Matrix", title)
+			return tc.main.trf("🗄 «%s» (%d) moved to the Matrix archive", "🗄 «%s» (строка %d) убран в архив Matrix", title, rowNumber)
 		}
 		if err = tc.clearPeerRejection(ctx, portalID); err != nil {
 			zerolog.Ctx(ctx).Err(err).Str("portal_id", string(portalID)).Msg("Failed to clear rejection")
 			return tc.main.trf("Failed to un-decline «%s»: %v", "Не удалось снять отклонение «%s»: %v", title, err)
 		}
 		return tc.main.trf(
-			"✅ «%s» is unblocked, the room is created on the next message",
-			"✅ «%s» разблокирован — комната появится при следующем сообщении", title,
+			"✅ «%s» (%d) is unblocked, the room is created on the next message",
+			"✅ «%s» (строка %d) разблокирован — комната появится при следующем сообщении", title, rowNumber,
 		)
 	}
 	reason := tc.main.tr("declined manually", "отклонён вручную")
@@ -477,8 +486,8 @@ func (tc *TelegramClient) applyRowAction(
 		return tc.main.trf("Failed to decline «%s»: %v", "Не удалось отклонить «%s»: %v", title, err)
 	}
 	return tc.main.trf(
-		"⛔ «%s» is declined, new messages will not reach Matrix",
-		"⛔ «%s» отклонён — новые сообщения в Matrix не попадут", title,
+		"⛔ «%s» (%d) is declined, new messages will not reach Matrix",
+		"⛔ «%s» (строка %d) отклонён — новые сообщения в Matrix не попадут", title, rowNumber,
 	)
 }
 
