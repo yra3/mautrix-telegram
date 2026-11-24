@@ -475,10 +475,14 @@ func (tc *TelegramClient) applyRowAction(
 			zerolog.Ctx(ctx).Err(err).Str("portal_id", string(portalID)).Msg("Failed to clear rejection")
 			return tc.main.trf("Failed to un-decline «%s»: %v", "Не удалось снять отклонение «%s»: %v", title, err)
 		}
-		return tc.main.trf(
+		status := tc.main.trf(
 			"✅ «%s» (%d) is unblocked, the room is created on the next message",
 			"✅ «%s» (строка %d) разблокирован — комната появится при следующем сообщении", title, rowNumber,
 		)
+		if warning := tc.redeclineWarning(ctx, portalID); warning != "" {
+			status += " — " + warning
+		}
+		return status
 	}
 	reason := tc.main.tr("declined manually", "отклонён вручную")
 	if err = tc.rejectPeerManually(ctx, portalID, reason, row.HasMXID); err != nil {
@@ -489,6 +493,34 @@ func (tc *TelegramClient) applyRowAction(
 		"⛔ «%s» (%d) is declined, new messages will not reach Matrix",
 		"⛔ «%s» (строка %d) отклонён — новые сообщения в Matrix не попадут", title, rowNumber,
 	)
+}
+
+// redeclineWarning explains why an un-declined chat will be declined again by
+// the automatic rules on its next update, which otherwise looks like the toggle
+// silently did nothing.
+func (tc *TelegramClient) redeclineWarning(ctx context.Context, portalID networkid.PortalID) string {
+	row, err := tc.main.Store.ChatCatalog.Get(ctx, tc.telegramUserID, string(portalID))
+	if err != nil || row == nil {
+		return ""
+	}
+	switch {
+	case row.InArchive && !tc.main.Config.BridgeArchived:
+		return tc.main.tr(
+			"it is in the Telegram archive, so the next update will decline it again",
+			"он в архиве Telegram, поэтому следующее обновление отклонит его снова",
+		)
+	case row.IsBroadcast:
+		return tc.main.tr(
+			"broadcast channels are declined automatically",
+			"широковещательные каналы отклоняются автоматически",
+		)
+	case row.Participants > 0 && !tc.main.Config.ShouldBridge(row.Participants):
+		return tc.main.trf(
+			"it has too many members (%d), the next update will decline it again",
+			"слишком много участников (%d), следующее обновление отклонит его снова", row.Participants,
+		)
+	}
+	return ""
 }
 
 // selectAbsoluteRow handles the digit shortcut: the number is the position in

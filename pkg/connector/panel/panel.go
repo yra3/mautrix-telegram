@@ -228,7 +228,12 @@ func Render(p Page) string {
 
 	for i, row := range p.Rows {
 		num := p.Offset + i + 1
-		fmt.Fprintf(&b, "%d. «%s» · `%s`", num, cleanTitle(row.Title), row.PortalID)
+		if i < len(RowEmojis) {
+			// The badge is the button that acts on this row on the current page.
+			fmt.Fprintf(&b, "%s %d. «%s» · `%s`", RowEmojis[i], num, cleanTitle(row.Title), row.PortalID)
+		} else {
+			fmt.Fprintf(&b, "%d. «%s» · `%s`", num, cleanTitle(row.Title), row.PortalID)
+		}
 		if row.Participants > 0 {
 			fmt.Fprintf(&b, " · %d %s", row.Participants, tr(ru, "members", "уч."))
 		}

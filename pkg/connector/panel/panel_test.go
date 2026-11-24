@@ -93,7 +93,10 @@ func TestRenderFiveRowsPerPageAndContinuousNumbering(t *testing.T) {
 		t.Errorf("missing page counter in %q", out)
 	}
 	// The first row of page 2 is number 6.
-	if !strings.Contains(out, "6. «A»") {
+	if !strings.Contains(out, "① 6. «A»") {
+		t.Errorf("missing the row button badge in\n%s", out)
+	}
+	if !strings.Contains(out, "② 7. «B»") {
 		t.Errorf("numbering must continue across pages:\n%s", out)
 	}
 	if !strings.Contains(out, "`channel:1`") {
