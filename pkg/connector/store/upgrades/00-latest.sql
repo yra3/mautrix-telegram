@@ -110,5 +110,6 @@ CREATE TABLE declined_panel (
     sort          TEXT    NOT NULL DEFAULT 'recent',
     generation    INTEGER NOT NULL DEFAULT 0,
     created_ts    BIGINT  NOT NULL,
-    updated_ts    BIGINT  NOT NULL
+    updated_ts    BIGINT  NOT NULL,
+    layout        TEXT    NOT NULL DEFAULT ''
 );

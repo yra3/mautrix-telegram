@@ -37,6 +37,8 @@ type PanelState struct {
 	Generation  int64
 	CreatedTS   int64
 	UpdatedTS   int64
+	// Layout is the JSON of the rendered page: the chat behind every row button.
+	Layout string
 }
 
 type PanelStateQuery struct {
@@ -44,15 +46,15 @@ type PanelStateQuery struct {
 }
 
 const (
-	panelStateColumns = "user_mxid, room_id, event_id, page, filter_query, sort, generation, created_ts, updated_ts"
+	panelStateColumns = "user_mxid, room_id, event_id, page, filter_query, sort, generation, created_ts, updated_ts, layout"
 
 	getPanelStateQuery    = "SELECT " + panelStateColumns + " FROM declined_panel WHERE user_mxid=$1"
 	upsertPanelStateQuery = `
 		INSERT INTO declined_panel (` + panelStateColumns + `)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (user_mxid) DO UPDATE SET
 			room_id=$2, event_id=$3, page=$4, filter_query=$5, sort=$6,
-			generation=$7, created_ts=$8, updated_ts=$9
+			generation=$7, created_ts=$8, updated_ts=$9, layout=$10
 	`
 	deletePanelStateQuery = "DELETE FROM declined_panel WHERE user_mxid=$1"
 )
@@ -61,7 +63,7 @@ func scanPanelState(row dbutil.Scannable) (*PanelState, error) {
 	var p PanelState
 	err := row.Scan(
 		&p.UserMXID, &p.RoomID, &p.EventID, &p.Page, &p.FilterQuery, &p.Sort,
-		&p.Generation, &p.CreatedTS, &p.UpdatedTS,
+		&p.Generation, &p.CreatedTS, &p.UpdatedTS, &p.Layout,
 	)
 	if err != nil {
 		return nil, err
@@ -72,7 +74,7 @@ func scanPanelState(row dbutil.Scannable) (*PanelState, error) {
 func (p *PanelState) sqlVariables() []any {
 	return []any{
 		p.UserMXID, p.RoomID, p.EventID, p.Page, p.FilterQuery, p.Sort,
-		p.Generation, p.CreatedTS, p.UpdatedTS,
+		p.Generation, p.CreatedTS, p.UpdatedTS, p.Layout,
 	}
 }
 

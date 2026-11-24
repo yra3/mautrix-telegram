@@ -19,6 +19,7 @@ package connector
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -176,6 +177,7 @@ func (tc *TelegramClient) renderPanel(ctx context.Context, user *bridgev2.User, 
 		Status:    status,
 		Lang:      tc.main.panelLang(),
 	}
+	state.Layout = buildPanelLayout(state.Page, page.Offset, rows)
 	return panel.Render(page), len(rows), needFill, nil
 }
 
@@ -430,54 +432,74 @@ func (tc *TelegramClient) panelTotal(ctx context.Context, state *store.PanelStat
 func (tc *TelegramClient) applyRowAction(
 	ctx context.Context, user *bridgev2.User, state *store.PanelState, rowIndex int,
 ) string {
-	rows, _, err := tc.panelRows(ctx, state)
-	if err != nil {
-		return tc.main.tr("Failed to load the chat list", "Не удалось загрузить список чатов")
+	target, page, ok := tc.layoutTarget(state, rowIndex)
+	if !ok {
+		// No layout yet (panel drawn by an older build): resolve against the live page.
+		rows, _, err := tc.panelRows(ctx, state)
+		if err != nil {
+			return tc.main.tr("Failed to load the chat list", "Не удалось загрузить список чатов")
+		}
+		if rowIndex < 0 || rowIndex >= len(rows) {
+			return tc.main.tr("No such row on this page", "На этой странице нет такой строки")
+		}
+		row := rows[rowIndex]
+		target = panelLayoutRow{
+			Number:   state.Page*panel.PageSize + rowIndex + 1,
+			PortalID: row.PortalID,
+			Title:    row.Title,
+		}
+		page = state.Page
 	}
-	if rowIndex < 0 || rowIndex >= len(rows) {
-		return tc.main.tr("No such row on this page", "На этой странице нет такой строки")
-	}
-	row := rows[rowIndex]
-	portalID := networkid.PortalID(row.PortalID)
-	title := row.Title
+	state.Page = page
+	portalID := networkid.PortalID(target.PortalID)
+	title := target.Title
 	if title == "" {
-		title = row.PortalID
+		title = target.PortalID
 	}
-	rowNumber := state.Page*panel.PageSize + rowIndex + 1
+	roomID := tc.portalMXID(ctx, string(portalID))
+	rejection := tc.main.Store.ChatRejection.GetOne(ctx, tc.telegramUserID, string(portalID))
+	rejected := rejection != nil
+	hasMXID := roomID != "" || (rejection != nil && rejection.HasMXID)
+	title = target.Title
 	zerolog.Ctx(ctx).Info().
-		Int("page", state.Page).
+		Int("page", page).
 		Int("row_index", rowIndex).
-		Int("row_number", rowNumber).
+		Int("row_number", target.Number).
 		Str("portal_id", string(portalID)).
 		Str("title", title).
-		Bool("rejected", row.Rejected).
+		Bool("rejected", rejected).
 		Msg("Panel row action")
-	if row.Rejected {
-		if row.RoomID != "" || row.HasMXID {
+	if rejected {
+		if hasMXID {
 			doublePuppet := user.DoublePuppet(ctx)
 			if doublePuppet == nil {
-				return tc.main.trf(
-					"Double puppeting is required to archive «%s»", "Для архивации «%s» нужен double puppeting",
+				return tc.main.tr(
+					"Double puppeting is required to archive rooms",
+					"Для архивации комнат нужен double puppeting",
 				)
 			}
-			if row.RoomID == "" {
+			if roomID == "" {
 				return tc.main.trf(
-					"«%s» has a room, but its ID is unknown", "У «%s» есть комната, но её ID не найден",
+					"«%s» has a room, but its ID is unknown",
+					"У «%s» есть комната, но её ID не найден", title,
 				)
 			}
-			if err = doublePuppet.TagRoom(ctx, id.RoomID(row.RoomID), event.RoomTagLowPriority, true); err != nil {
-				zerolog.Ctx(ctx).Err(err).Str("room_id", string(row.RoomID)).Msg("Failed to archive room")
+			if err := doublePuppet.TagRoom(ctx, roomID, event.RoomTagLowPriority, true); err != nil {
+				zerolog.Ctx(ctx).Err(err).Str("room_id", string(roomID)).Msg("Failed to archive room")
 				return tc.main.trf("Failed to archive «%s»: %v", "Не удалось архивировать «%s»: %v", title, err)
 			}
-			return tc.main.trf("🗄 «%s» (%d) moved to the Matrix archive", "🗄 «%s» (строка %d) убран в архив Matrix", title, rowNumber)
+			return tc.main.trf(
+				"🗄 «%s» (%d) moved to the Matrix archive",
+				"🗄 «%s» (строка %d) убран в архив Matrix", title, target.Number,
+			)
 		}
-		if err = tc.clearPeerRejection(ctx, portalID); err != nil {
+		if err := tc.clearPeerRejection(ctx, portalID); err != nil {
 			zerolog.Ctx(ctx).Err(err).Str("portal_id", string(portalID)).Msg("Failed to clear rejection")
 			return tc.main.trf("Failed to un-decline «%s»: %v", "Не удалось снять отклонение «%s»: %v", title, err)
 		}
 		status := tc.main.trf(
 			"✅ «%s» (%d) is unblocked, the room is created on the next message",
-			"✅ «%s» (строка %d) разблокирован — комната появится при следующем сообщении", title, rowNumber,
+			"✅ «%s» (строка %d) разблокирован — комната появится при следующем сообщении", title, target.Number,
 		)
 		if warning := tc.redeclineWarning(ctx, portalID); warning != "" {
 			status += " — " + warning
@@ -485,14 +507,62 @@ func (tc *TelegramClient) applyRowAction(
 		return status
 	}
 	reason := tc.main.tr("declined manually", "отклонён вручную")
-	if err = tc.rejectPeerManually(ctx, portalID, reason, row.HasMXID); err != nil {
+	if err := tc.rejectPeerManually(ctx, portalID, reason, hasMXID); err != nil {
 		zerolog.Ctx(ctx).Err(err).Str("portal_id", string(portalID)).Msg("Failed to decline chat")
 		return tc.main.trf("Failed to decline «%s»: %v", "Не удалось отклонить «%s»: %v", title, err)
 	}
 	return tc.main.trf(
 		"⛔ «%s» (%d) is declined, new messages will not reach Matrix",
-		"⛔ «%s» (строка %d) отклонён — новые сообщения в Matrix не попадут", title, rowNumber,
+		"⛔ «%s» (строка %d) отклонён — новые сообщения в Matrix не попадут", title, target.Number,
 	)
+}
+
+// panelLayoutRow is one frozen row of a rendered panel page.
+type panelLayoutRow struct {
+	Number   int    `json:"n"`
+	PortalID string `json:"id"`
+	Title    string `json:"t"`
+}
+
+type panelLayout struct {
+	Page int              `json:"page"`
+	Rows []panelLayoutRow `json:"rows"`
+}
+
+// buildPanelLayout freezes the button-to-chat mapping of a rendered page. Without
+// it a click lands on whatever row happens to sit at that index by the time the
+// reaction is processed, which is wrong whenever automatic rejections reshuffle
+// the list in between (they arrive constantly).
+func buildPanelLayout(page, offset int, rows []panel.Row) string {
+	layout := panelLayout{Page: page, Rows: make([]panelLayoutRow, len(rows))}
+	for i, row := range rows {
+		layout.Rows[i] = panelLayoutRow{Number: offset + i + 1, PortalID: row.PortalID, Title: row.Title}
+	}
+	raw, err := json.Marshal(layout)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func parsePanelLayout(raw string) (panelLayout, bool) {
+	var layout panelLayout
+	if raw == "" {
+		return layout, false
+	}
+	if err := json.Unmarshal([]byte(raw), &layout); err != nil || len(layout.Rows) == 0 {
+		return panelLayout{}, false
+	}
+	return layout, true
+}
+
+// layoutTarget resolves a row index of the page the user is looking at.
+func (tc *TelegramClient) layoutTarget(state *store.PanelState, rowIndex int) (panelLayoutRow, int, bool) {
+	layout, ok := parsePanelLayout(state.Layout)
+	if !ok || rowIndex < 0 || rowIndex >= len(layout.Rows) {
+		return panelLayoutRow{}, 0, false
+	}
+	return layout.Rows[rowIndex], layout.Page, true
 }
 
 // redeclineWarning explains why an un-declined chat will be declined again by
@@ -534,6 +604,16 @@ func (tc *TelegramClient) selectAbsoluteRow(ctx context.Context, user *bridgev2.
 		return
 	}
 	index := number - 1
+	if layout, ok := parsePanelLayout(state.Layout); ok {
+		if first := layout.Page*panel.PageSize + 1; number >= first && number < first+len(layout.Rows) {
+			state.Page = layout.Page
+			status := tc.applyRowAction(ctx, user, state, number-first)
+			if err = tc.drawPanel(ctx, user, state, status); err != nil {
+				zerolog.Ctx(ctx).Err(err).Msg("Failed to redraw declined panel after digit selection")
+			}
+			return
+		}
+	}
 	state.Page = index / panel.PageSize
 	status := tc.applyRowAction(ctx, user, state, index%panel.PageSize)
 	if err = tc.drawPanel(ctx, user, state, status); err != nil {
