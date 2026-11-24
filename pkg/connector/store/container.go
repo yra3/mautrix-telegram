@@ -30,20 +30,26 @@ import (
 type Container struct {
 	*dbutil.Database
 
-	TelegramFile *TelegramFileQuery
-	Username     *UsernameQuery
-	PhoneNumber  *PhoneNumberQuery
-	Topic        *TopicQuery
+	TelegramFile  *TelegramFileQuery
+	Username      *UsernameQuery
+	PhoneNumber   *PhoneNumberQuery
+	Topic         *TopicQuery
+	ChatCatalog   *ChatCatalogQuery
+	ChatRejection *ChatRejectionQuery
+	PanelState    *PanelStateQuery
 }
 
 func NewStore(db *dbutil.Database, log dbutil.DatabaseLogger) *Container {
 	return &Container{
 		Database: db.Child("telegram_version", upgrades.Table, log),
 
-		TelegramFile: &TelegramFileQuery{dbutil.MakeQueryHelper(db, newTelegramFile)},
-		Username:     &UsernameQuery{db},
-		PhoneNumber:  &PhoneNumberQuery{db},
-		Topic:        &TopicQuery{db: db, existingTopics: exsync.NewSet[topicKey]()},
+		TelegramFile:  &TelegramFileQuery{dbutil.MakeQueryHelper(db, newTelegramFile)},
+		Username:      &UsernameQuery{db},
+		PhoneNumber:   &PhoneNumberQuery{db},
+		Topic:         &TopicQuery{db: db, existingTopics: exsync.NewSet[topicKey]()},
+		ChatCatalog:   &ChatCatalogQuery{db: db},
+		ChatRejection: &ChatRejectionQuery{db: db},
+		PanelState:    &PanelStateQuery{db: db},
 	}
 }
 

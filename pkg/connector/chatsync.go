@@ -322,6 +322,10 @@ func (tc *TelegramClient) syncNormalDialog(
 		return nil
 	}
 
+	// Record the chat before any rejection checks: the catalog is what makes
+	// archived / oversized / bot chats searchable after they were rejected.
+	tc.recordCatalogFromDialog(ctx, dialog, users, chats)
+
 	portalKey := tc.makePortalKeyFromPeer(dialog.GetPeer(), 0)
 	portal, err := tc.main.Bridge.GetPortalByKey(ctx, portalKey)
 	if err != nil {
