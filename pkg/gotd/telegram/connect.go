@@ -130,13 +130,16 @@ var errRunReturned = errors.New("Client.Run() returned")
 // See `examples/bg-run` and `contrib/gb` package for classic approach without
 // explicit callback, with Connect and defer close().
 func (c *Client) Run(ctx context.Context, f func(ctx context.Context) error) (err error) {
-	if c.ctx != nil {
-		select {
-		case <-c.ctx.Done():
-			return errors.Wrap(c.ctx.Err(), "client already closed")
-		default:
-		}
+	// A Client may be run again after a previous Run returned: the bridge
+	// restarts a dead session with the same client instance, and the previous
+	// Run always cancels c.ctx on exit, so checking c.ctx.Done() here would
+	// reject every restart (leaving the session permanently dead).
+	// Only concurrent runs are rejected: the client context, connection and
+	// pool state are shared.
+	if !c.running.CompareAndSwap(false, true) {
+		return errors.New("client is already running")
 	}
+	defer c.running.Store(false)
 
 	// Setting up client context for background operations like updates
 	// handling or pool creation.

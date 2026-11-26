@@ -116,6 +116,10 @@ type Client struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 
+	// running guards against concurrent Run calls. Run may be called again
+	// after it has returned (the session is restarted with the same client).
+	running atomic.Bool
+
 	// Client config.
 	appID   int    // immutable
 	appHash string // immutable
